@@ -165,7 +165,7 @@ class MultiTaskPerceptionModel(nn.Module):
         sd = self._read_sd(cls_path)
         if sd:
             print(f"  ✅ Loading classifier from {cls_path}")
-            print("Classifier keys sample:", list(sd.keys())[:10])
+            # print("Classifier keys sample:", list(sd.keys())[:10])
             print("Backbone keys extracted:", len(bb))
             print("Classifier keys extracted:", len(clf))
             # bb  = {k[len('backbone.'):]:   v for k, v in sd.items() if k.startswith('backbone.')}
