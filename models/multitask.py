@@ -172,7 +172,13 @@ class MultiTaskPerceptionModel(nn.Module):
                 if 'features' in k or 'backbone' in k:
                     new_k = k.replace('backbone.', '').replace('features.', 'features.')
                     bb[new_k] = v
-            clf = {k[len('classifier.'):]: v for k, v in sd.items() if k.startswith('classifier.')}
+            # clf = {k[len('classifier.'):]: v for k, v in sd.items() if k.startswith('classifier.')}
+            clf = {}
+            for k, v in sd.items():
+                for prefix in ('classifier_head.', 'classifier.', 'head.'):
+                    if k.startswith(prefix):
+                        clf[k[len(prefix):]] = v
+                        break
             if bb:  self.backbone.load_state_dict(bb, strict=False)
             if clf: self.classifier_head.load_state_dict(clf, strict=False)
             print("Backbone keys extracted:", len(bb))
