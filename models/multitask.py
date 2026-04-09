@@ -97,8 +97,6 @@ class MultiTaskPerceptionModel(nn.Module):
                  unet_path:       str = "checkpoints/unet.pth"):
         super().__init__()
 
-        os.makedirs("checkpoints", exist_ok=True)
-
         # ── Download weights from Google Drive ───────────────────────────────
         gdown.download(id="1ly8n8hye9XDcoOjp8Mqx4Wz5DAq8LAc2", output=classifier_path, quiet=False)
         gdown.download(id="1Z585cGenqPWQdOMTMgipvG2Xh7syC0Hq",  output=localizer_path,  quiet=False)
@@ -147,6 +145,9 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # ── Load pretrained weights ──────────────────────────────────────────
         self._load_weights(classifier_path, localizer_path, unet_path)
+
+        # Always start in eval mode so BN uses running stats, not batch stats
+        self.eval()
 
     # ── weight loading ────────────────────────────────────────────────────────
     @staticmethod
@@ -200,6 +201,8 @@ class MultiTaskPerceptionModel(nn.Module):
           'localization'   : (B, 4)                        — [cx, cy, w, h] pixels
           'segmentation'   : (B, seg_classes, H, W)        — raw logits
         """
+        # Ensure eval mode so BN/Dropout behave correctly during inference
+        self.eval()
         feats = self.backbone.features
 
         # Extract intermediate activations for U-Net skip connections.
