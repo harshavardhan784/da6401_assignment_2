@@ -219,6 +219,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # Classification
         cls_logits = self.classifier_head(pooled)
+        print(cls_logits)
 
         # Localization  (Sigmoid output scaled to pixel space)
         loc_out = self.localizer_head(pooled) * self.image_size
