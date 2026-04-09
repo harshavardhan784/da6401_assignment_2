@@ -97,6 +97,8 @@ class MultiTaskPerceptionModel(nn.Module):
                  unet_path:       str = "checkpoints/unet.pth"):
         super().__init__()
 
+        os.makedirs("checkpoints", exist_ok=True)
+
         # ── Download weights from Google Drive ───────────────────────────────
         gdown.download(id="1ly8n8hye9XDcoOjp8Mqx4Wz5DAq8LAc2", output=classifier_path, quiet=False)
         gdown.download(id="1Z585cGenqPWQdOMTMgipvG2Xh7syC0Hq",  output=localizer_path,  quiet=False)
