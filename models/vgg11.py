@@ -12,6 +12,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import torchvision.transforms.functional as TF
+import torchvision
 
 from PIL import Image
 from sklearn.model_selection import train_test_split
