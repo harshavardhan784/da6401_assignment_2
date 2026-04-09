@@ -97,9 +97,6 @@ class MultiTaskPerceptionModel(nn.Module):
                  unet_path:       str = "checkpoints/unet.pth"):
         super().__init__()
 
-        os.makedirs("checkpoints", exist_ok=True)
-
-
         # ── Download weights from Google Drive ───────────────────────────────
         gdown.download(id="1ly8n8hye9XDcoOjp8Mqx4Wz5DAq8LAc2", output=classifier_path, quiet=False)
         gdown.download(id="1Z585cGenqPWQdOMTMgipvG2Xh7syC0Hq",  output=localizer_path,  quiet=False)
@@ -162,10 +159,9 @@ class MultiTaskPerceptionModel(nn.Module):
         # Classifier → backbone + classifier_head
         sd = self._read_sd(cls_path)
         if sd:
-            print(list(sd.keys())[:20])
             print(f"  ✅ Loading classifier from {cls_path}")
             bb  = {k[len('backbone.'):]:   v for k, v in sd.items() if k.startswith('backbone.')}
-            clf = {k[len('classifier_head.'):]: v for k, v in sd.items() if k.startswith('classifier_head.')}
+            clf = {k[len('classifier.'):]: v for k, v in sd.items() if k.startswith('classifier.')}
             if bb:  self.backbone.load_state_dict(bb, strict=False)
             if clf: self.classifier_head.load_state_dict(clf, strict=False)
 
