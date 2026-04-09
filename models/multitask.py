@@ -32,24 +32,24 @@ class MultiTaskPerceptionModel(nn.Module):
         
         # Download weights from Google Drive
         # IMPORTANT: Replace these IDs with your actual Google Drive file IDs
-        # classifier_id = "YOUR_CLASSIFIER_FILE_ID"
-        # localizer_id = "YOUR_LOCALIZER_FILE_ID"
-        # unet_id = "YOUR_UNET_FILE_ID"
+        classifier_id = "1ly8n8hye9XDcoOjp8Mqx4Wz5DAq8LAc2"  
+        localizer_id = "1Z585cGenqPWQdOMTMgipvG2Xh7syC0Hq"   
+        unet_id = "1IwAfZohK42rjQ0O_psSJ0zfocqmPEmG1"   
         
         # For now, check if files exist locally, otherwise download
         if not os.path.exists(classifier_path):
             print(f"Downloading classifier weights from Google Drive...")
-            # gdown.download(id=classifier_id, output=classifier_path, quiet=False)
+            gdown.download(id=classifier_id, output=classifier_path, quiet=False)
             print(f"Please place your trained {classifier_path} in the current directory")
         
         if not os.path.exists(localizer_path):
             print(f"Downloading localizer weights from Google Drive...")
-            # gdown.download(id=localizer_id, output=localizer_path, quiet=False)
+            gdown.download(id=localizer_id, output=localizer_path, quiet=False)
             print(f"Please place your trained {localizer_path} in the current directory")
         
         if not os.path.exists(unet_path):
             print(f"Downloading UNet weights from Google Drive...")
-            # gdown.download(id=unet_id, output=unet_path, quiet=False)
+            gdown.download(id=unet_id, output=unet_path, quiet=False)
             print(f"Please place your trained {unet_path} in the current directory")
         
         # Shared encoder
