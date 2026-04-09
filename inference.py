@@ -85,10 +85,10 @@ class MultiTaskInference:
         scale_x = original_size[0] / self.image_size
         scale_y = original_size[1] / self.image_size
         bbox_original = [
-            bbox_pixel[0] * scale_x,
-            bbox_pixel[1] * scale_y,
-            bbox_pixel[2] * scale_x,
-            bbox_pixel[3] * scale_y
+            bbox_pixel[0],
+            bbox_pixel[1],
+            bbox_pixel[2],
+            bbox_pixel[3]
         ]
         
         # Segmentation (pixel-wise mask)
