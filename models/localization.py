@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from models.vgg11 import VGG11Encoder
 from models.layers import CustomDropout
-
+import torchvision
 
 class VGG11Localizer(nn.Module):
     """VGG11-based localizer."""

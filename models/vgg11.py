@@ -1,24 +1,9 @@
 """VGG11 encoder
 """
-import os, time, gc, math
-import numpy as np
-from sklearn.metrics import f1_score as sk_f1
-from typing import Tuple, Optional, Callable, List
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-import torchvision.transforms.functional as TF
-import torchvision
 
-from PIL import Image
-from sklearn.model_selection import train_test_split
-from tqdm import tqdm
-from collections import Counter
-import wandb
 
 CFG = [64,'M',128,'M',256,256,'M',512,512,'M',512,512,'M']
 def init_weights(module: nn.Module):
