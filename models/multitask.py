@@ -204,7 +204,6 @@ class MultiTaskPerceptionModel(nn.Module):
           'segmentation'   : (B, seg_classes, H, W)        — raw logits
         """
         # Ensure eval mode so BN/Dropout behave correctly during inference
-        self.eval()
         feats = self.backbone.features
 
         # Extract intermediate activations for U-Net skip connections.
