@@ -20,6 +20,7 @@ class MultiTaskPerceptionModel(nn.Module):
     def __init__(self, num_classes=37, use_batch_norm=True, dropout_p=0.5):
         super().__init__()
         
+        os.makedirs('checkpoints', exist_ok=True)  # Ensure checkpoints directory exists
         # Download checkpoints from Google Drive
         import gdown
         classifier_path = "checkpoints/classifier.pth"
