@@ -86,7 +86,10 @@ class MultiTaskPerceptionModel(nn.Module):
             }
         """
         features   = self.backbone(x)
+        print(f"Features shape: {features.shape}")
+
         cls_logits = self.classifier(features)
+        print(f"Logits shape: {cls_logits.shape}")
         bbox       = self.localizer(features) * 224
         seg_logits = self.seg_model(x)
 
@@ -96,25 +99,48 @@ class MultiTaskPerceptionModel(nn.Module):
             'segmentation'  : seg_logits,
         }
 
+    # Add this in multitask.py before loading
+    def _inspect_checkpoint(self, path):
+        ckpt = torch.load(path, map_location='cpu', weights_only=False)
+        sd = ckpt.get('model_state_dict', ckpt)
+        print(f"\n=== {path} ===")
+        print(f"Keys: {list(sd.keys())[:10]}...")
+        print(f"Total keys: {len(sd)}")
+        return sd
+    
+    
     def _load_pretrained(self, cls_path, loc_path, seg_path):
         """Load weights from the three individual task checkpoints."""
-
+    
         # classifier.pth -> backbone + classifier head
         if cls_path and os.path.exists(cls_path):
             ckpt = torch.load(cls_path, map_location='cpu', weights_only=False)
-            sd   = ckpt.get('model_state_dict', ckpt)
-
-            backbone_sd   = {k[len('backbone.'):]: v
-                             for k, v in sd.items() if k.startswith('backbone.')}
-            classifier_sd = {k[len('classifier.'):]: v
-                             for k, v in sd.items() if k.startswith('classifier.')}
-
+            sd = ckpt.get('model_state_dict', ckpt)
+            
+            # Debug: Print available keys to understand structure
+            print(f"Keys in classifier checkpoint: {list(sd.keys())[:5]}...")
+            
+            # Try both possible key patterns
+            backbone_sd = {}
+            classifier_sd = {}
+            
+            for k, v in sd.items():
+                if k.startswith('backbone.'):
+                    backbone_sd[k[len('backbone.'):]] = v
+                elif k.startswith('classifier.'):
+                    classifier_sd[k[len('classifier.'):]] = v
+                # If no prefix, check if it's backbone or classifier
+                elif 'features' in k:  # VGG11 backbone uses 'features'
+                    backbone_sd[k] = v
+                elif 'classifier' in k:
+                    classifier_sd[k] = v
+            
             if backbone_sd:
                 self.backbone.load_state_dict(backbone_sd, strict=False)
-                print(f"  Loaded backbone from {cls_path}")
+                print(f"  Loaded backbone from {cls_path} ({len(backbone_sd)} keys)")
             if classifier_sd:
                 self.classifier.load_state_dict(classifier_sd, strict=False)
-                print(f"  Loaded classifier from {cls_path}")
+                print(f"  Loaded classifier from {cls_path} ({len(classifier_sd)} keys)")
 
         # localizer.pth -> localization head
         # VGG11Localizer saves its head under "regressor.*" keys
