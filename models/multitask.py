@@ -142,34 +142,24 @@ class MultiTaskPerceptionModel(nn.Module):
 
             # Load classifier
             if classifier_sd:
-                # Temporarily use strict=True to catch mismatches during debug
-                try:
-                    self.classifier.load_state_dict(classifier_sd, strict=True)
-                    print(f"  ✓ Loaded classifier: {len(classifier_sd)} keys (strict match)")
-                except RuntimeError as e:
-                    print(f"  Strict load failed: {e}")
-                    # Fallback to non-strict
-                    missing, unexpected = self.classifier.load_state_dict(classifier_sd, strict=False)
-                    print(f"  ✓ Loaded classifier (non-strict): {len(classifier_sd)} keys")
-                    if missing:
-                        print(f"    Missing: {missing[:3]}...")
-                    if unexpected:
-                        print(f"    Unexpected: {unexpected[:3]}...")
-            else:
-                print("  ⚠ No classifier keys found!")
-
-            # Verify that weights actually changed (sanity check)
-            with torch.no_grad():
-                init_weight = self.classifier[1].weight[0, 0].item()
-                # Force a dummy forward to ensure any lazy init is done
-                dummy = torch.zeros(1, 512, 7, 7)
-                _ = self.classifier(dummy)
-                loaded_weight = self.classifier[1].weight[0, 0].item()
-                print(f"  Weight[0,0] after loading: {loaded_weight:.6f}")
-                if abs(loaded_weight - init_weight) < 1e-6:
+                # Store a reference weight before loading
+                with torch.no_grad():
+                    before_weight = self.classifier[1].weight[0, 0].clone()
+                missing, unexpected = self.classifier.load_state_dict(classifier_sd, strict=False)
+                with torch.no_grad():
+                    after_weight = self.classifier[1].weight[0, 0]
+                print(f"  ✓ Loaded classifier: {len(classifier_sd)} keys")
+                if missing:
+                    print(f"    Missing: {missing[:3]}...")
+                if unexpected:
+                    print(f"    Unexpected: {unexpected[:3]}...")
+                # Verify change
+                if torch.allclose(before_weight, after_weight):
                     print("  ⚠ WARNING: weights did NOT change → loading failed!")
                 else:
                     print("  ✓ Weights changed – loading successful")
+            else:
+                print("  ⚠ No classifier keys found!")
 
         # ── 2. Localizer ──────────────────────────────────────────────────────
         if loc_path and os.path.exists(loc_path):
