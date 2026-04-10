@@ -28,7 +28,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # ── Download checkpoints ──────────────────────────────────────────────
         if not os.path.exists(classifier_path):
-            gdown.download(id="1d51UXCh4DXQsCLr0WtOne8f1yGgP_BT7",
+            gdown.download(id="1Y4hCiPdUe1WLA9XsQD0nq9ocsH55__da",
                            output=classifier_path, quiet=False)
         if not os.path.exists(localizer_path):
             gdown.download(id="1gKu5L9hSIAFMJuOMxiUqHIVm5EbIScKD",
