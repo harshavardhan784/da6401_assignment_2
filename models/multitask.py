@@ -35,15 +35,26 @@ class MultiTaskPerceptionModel(nn.Module):
         # Shared backbone
         self.backbone = VGG11(in_channels=3, use_batch_norm=use_batch_norm)
 
-        # Classification head
+        # Classification head - MUST match classification.py exactly
+        # Index mapping:
+        # 0: Flatten
+        # 1: Linear(25088, 4096)
+        # 2: BatchNorm1d(4096)
+        # 3: ReLU
+        # 4: CustomDropout
+        # 5: Linear(4096, 4096)
+        # 6: BatchNorm1d(4096)
+        # 7: ReLU
+        # 8: CustomDropout
+        # 9: Linear(4096, num_classes)
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 4096),
-            nn.BatchNorm1d(4096) if use_batch_norm else nn.Identity(),
+            nn.BatchNorm1d(4096),  # Always use BatchNorm to match checkpoint
             nn.ReLU(inplace=True),
             CustomDropout(p=dropout_p),
             nn.Linear(4096, 4096),
-            nn.BatchNorm1d(4096) if use_batch_norm else nn.Identity(),
+            nn.BatchNorm1d(4096),  # Always use BatchNorm to match checkpoint
             nn.ReLU(inplace=True),
             CustomDropout(p=dropout_p),
             nn.Linear(4096, num_classes),
@@ -62,18 +73,19 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Sigmoid(),
         )
 
-        # Segmentation: full U-Net, num_classes auto-detected from checkpoint
+        # Segmentation: full U-Net
         from models.segmentation import VGG11UNet
         self.seg_model = VGG11UNet(num_classes=num_seg_classes,
                                    use_batch_norm=use_batch_norm)
 
+        # Initialize weights
         init_weights(self.classifier)
         init_weights(self.localizer)
 
+        # Load pretrained weights
         self._load_pretrained(classifier_path, localizer_path, unet_path)
 
-        # CRITICAL: ensure eval mode after all weight loading and any
-        # submodule re-creation inside _load_pretrained
+        # Set to eval mode
         self.eval()
 
     def forward(self, x):
@@ -85,81 +97,83 @@ class MultiTaskPerceptionModel(nn.Module):
                 'segmentation'  : Tensor (B, num_seg_classes, H, W)
             }
         """
-        features   = self.backbone(x)
-        print(f"Features shape: {features.shape}")
-
+        features = self.backbone(x)
         cls_logits = self.classifier(features)
-        print(f"Logits shape: {cls_logits.shape}")
-        bbox       = self.localizer(features) * 224
+        bbox = self.localizer(features) * 224
         seg_logits = self.seg_model(x)
 
         return {
             'classification': cls_logits,
-            'localization'  : bbox,
-            'segmentation'  : seg_logits,
+            'localization': bbox,
+            'segmentation': seg_logits,
         }
 
-    # Add this in multitask.py before loading
-    def _inspect_checkpoint(self, path):
-        ckpt = torch.load(path, map_location='cpu', weights_only=False)
-        sd = ckpt.get('model_state_dict', ckpt)
-        print(f"\n=== {path} ===")
-        print(f"Keys: {list(sd.keys())[:10]}...")
-        print(f"Total keys: {len(sd)}")
-        return sd
-    
-    
     def _load_pretrained(self, cls_path, loc_path, seg_path):
         """Load weights from the three individual task checkpoints."""
-    
-        # classifier.pth -> backbone + classifier head
+        
+        # Load classifier and backbone
         if cls_path and os.path.exists(cls_path):
             ckpt = torch.load(cls_path, map_location='cpu', weights_only=False)
             sd = ckpt.get('model_state_dict', ckpt)
             
-            # Debug: Print available keys to understand structure
-            print(f"Keys in classifier checkpoint: {list(sd.keys())[:5]}...")
+            print(f"Loading from {cls_path}...")
             
-            # Try both possible key patterns
+            # Load backbone weights
             backbone_sd = {}
-            classifier_sd = {}
-            
             for k, v in sd.items():
                 if k.startswith('backbone.'):
                     backbone_sd[k[len('backbone.'):]] = v
-                elif k.startswith('classifier.'):
-                    classifier_sd[k[len('classifier.'):]] = v
-                # If no prefix, check if it's backbone or classifier
-                elif 'features' in k:  # VGG11 backbone uses 'features'
-                    backbone_sd[k] = v
-                elif 'classifier' in k:
-                    classifier_sd[k] = v
             
             if backbone_sd:
-                self.backbone.load_state_dict(backbone_sd, strict=False)
-                print(f"  Loaded backbone from {cls_path} ({len(backbone_sd)} keys)")
+                missing, unexpected = self.backbone.load_state_dict(backbone_sd, strict=False)
+                print(f"  ✓ Loaded backbone: {len(backbone_sd)} keys")
+                if missing:
+                    print(f"    Missing: {missing[:3]}...")
+            
+            # Load classifier weights directly (keys already match)
+            classifier_sd = {}
+            for k, v in sd.items():
+                if k.startswith('classifier.'):
+                    classifier_sd[k] = v  # Keep full key with 'classifier.' prefix
+            
             if classifier_sd:
-                self.classifier.load_state_dict(classifier_sd, strict=False)
-                print(f"  Loaded classifier from {cls_path} ({len(classifier_sd)} keys)")
-
-        # localizer.pth -> localization head
-        # VGG11Localizer saves its head under "regressor.*" keys
+                # Load with strict=False to handle buffer differences
+                missing, unexpected = self.classifier.load_state_dict(classifier_sd, strict=False)
+                print(f"  ✓ Loaded classifier: {len(classifier_sd)} keys")
+                if missing:
+                    print(f"    Missing (expected - buffers): {missing[:3]}...")
+                
+                # Verify weights loaded correctly
+                with torch.no_grad():
+                    first_linear = self.classifier[1]
+                    print(f"  ✓ Classifier[1] weight mean: {first_linear.weight.mean().item():.6f}")
+        
+        # Load localizer head
         if loc_path and os.path.exists(loc_path):
             ckpt = torch.load(loc_path, map_location='cpu', weights_only=False)
-            sd   = ckpt.get('model_state_dict', ckpt)
-
-            localizer_sd = {k[len('regressor.'):]: v
-                            for k, v in sd.items() if k.startswith('regressor.')}
+            sd = ckpt.get('model_state_dict', ckpt)
+            
+            # Try different possible key patterns
+            localizer_sd = {}
+            for k, v in sd.items():
+                if 'regressor' in k:
+                    # Remove 'regressor.' prefix
+                    new_k = k.replace('regressor.', '')
+                    localizer_sd[new_k] = v
+                elif 'localizer' in k:
+                    new_k = k.replace('localizer.', '')
+                    localizer_sd[new_k] = v
+            
             if localizer_sd:
-                self.localizer.load_state_dict(localizer_sd, strict=False)
-                print(f"  Loaded localizer from {loc_path}")
-
-        # unet.pth -> full segmentation U-Net
+                missing, unexpected = self.localizer.load_state_dict(localizer_sd, strict=False)
+                print(f"  ✓ Loaded localizer from {loc_path} ({len(localizer_sd)} keys)")
+        
+        # Load segmentation model
         if seg_path and os.path.exists(seg_path):
             ckpt = torch.load(seg_path, map_location='cpu', weights_only=False)
-            sd   = ckpt.get('model_state_dict', ckpt)
-
-            # Auto-detect num_classes from saved head weight
+            sd = ckpt.get('model_state_dict', ckpt)
+            
+            # Check if we need to adjust num_classes
             if 'head.weight' in sd:
                 saved_nc = sd['head.weight'].shape[0]
                 current_nc = self.seg_model.head.weight.shape[0]
@@ -167,7 +181,7 @@ class MultiTaskPerceptionModel(nn.Module):
                     from models.segmentation import VGG11UNet
                     self.seg_model = VGG11UNet(num_classes=saved_nc,
                                                use_batch_norm=True)
-                    print(f"  Re-created seg_model with num_classes={saved_nc}")
-
-            self.seg_model.load_state_dict(sd, strict=False)
-            print(f"  Loaded seg model from {seg_path}")
+                    print(f"  ✓ Re-created seg_model with num_classes={saved_nc}")
+            
+            missing, unexpected = self.seg_model.load_state_dict(sd, strict=False)
+            print(f"  ✓ Loaded seg model from {seg_path} ({len(sd)} keys)")
