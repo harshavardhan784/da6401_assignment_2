@@ -1,6 +1,7 @@
 """
 Inference script for DA6401 Assignment 2
 Run predictions using trained models
+FIXED VERSION - Handles both tuple and dict returns
 """
 import argparse
 import torch
@@ -99,7 +100,7 @@ def segment(model_path, image_path):
 
 
 def multitask_inference(image_path):
-    """Run multi-task inference"""
+    """Run multi-task inference - FIXED to handle both tuple and dict returns"""
     model = MultiTaskPerceptionModel()
     model.to(DEVICE)
     model.eval()
@@ -108,7 +109,19 @@ def multitask_inference(image_path):
     img = img.to(DEVICE)
     
     with torch.no_grad():
-        cls_logits, bbox, seg_logits = model(img)
+        outputs = model(img)
+        
+        # Handle both tuple and dict returns
+        if isinstance(outputs, dict):
+            # Dict format: {'classification': ..., 'localization': ..., 'segmentation': ...}
+            cls_logits = outputs['classification']
+            bbox = outputs['localization']
+            seg_logits = outputs['segmentation']
+        elif isinstance(outputs, tuple) and len(outputs) == 3:
+            # Tuple format: (cls_logits, bbox, seg_logits)
+            cls_logits, bbox, seg_logits = outputs
+        else:
+            raise ValueError(f"Unexpected model output type: {type(outputs)}")
         
         pred_class = cls_logits.argmax(1).item()
         pred_prob = torch.softmax(cls_logits, dim=1)[0, pred_class].item()
