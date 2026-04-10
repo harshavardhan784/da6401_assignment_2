@@ -14,28 +14,26 @@ class MultiTaskPerceptionModel(nn.Module):
     - Classification (breed label)
     - Localization (bounding box)
     - Segmentation (pixel mask)
-    
+
     All tasks share the VGG11 backbone.
     """
     def __init__(self, num_classes=37, use_batch_norm=True, dropout_p=0.5):
         super().__init__()
-        
-        os.makedirs('checkpoints', exist_ok=True)  # Ensure checkpoints directory exists
-        # Download checkpoints from Google Drive
+
+        os.makedirs('checkpoints', exist_ok=True)
         import gdown
         classifier_path = "checkpoints/classifier.pth"
-        localizer_path = "checkpoints/localizer.pth"
-        unet_path = "checkpoints/unet.pth"
-        
-        # TODO: Replace these with your actual Google Drive file IDs
+        localizer_path  = "checkpoints/localizer.pth"
+        unet_path       = "checkpoints/unet.pth"
+
         gdown.download(id="1bQatPpJxWBYuzZA949igWJh5OrADKrYM", output=classifier_path, quiet=False)
-        gdown.download(id="1gKu5L9hSIAFMJuOMxiUqHIVm5EbIScKD", output=localizer_path, quiet=False)
-        gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4", output=unet_path, quiet=False)
-        
-        # Shared backbone
+        gdown.download(id="1gKu5L9hSIAFMJuOMxiUqHIVm5EbIScKD", output=localizer_path,  quiet=False)
+        gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4", output=unet_path,        quiet=False)
+
+        # ── Shared backbone ──────────────────────────────────────────────────
         self.backbone = VGG11(in_channels=3, use_batch_norm=use_batch_norm)
-        
-        # Classification head
+
+        # ── Classification head ──────────────────────────────────────────────
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 4096),
@@ -48,8 +46,8 @@ class MultiTaskPerceptionModel(nn.Module):
             CustomDropout(p=dropout_p),
             nn.Linear(4096, num_classes),
         )
-        
-        # Localization head
+
+        # ── Localization head ────────────────────────────────────────────────
         self.localizer = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 1024),
@@ -61,75 +59,76 @@ class MultiTaskPerceptionModel(nn.Module):
             nn.Linear(256, 4),
             nn.Sigmoid(),
         )
-        
-        # Segmentation head (lightweight decoder)
-        # We'll use a simple decoder for multi-task, not the full U-Net
-        self.seg_head = nn.Sequential(
-            nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2),  # 7 → 14
-            nn.BatchNorm2d(256) if use_batch_norm else nn.Identity(),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2),  # 14 → 28
-            nn.BatchNorm2d(128) if use_batch_norm else nn.Identity(),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2),   # 28 → 56
-            nn.BatchNorm2d(64) if use_batch_norm else nn.Identity(),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2),     # 56 → 112
-            nn.BatchNorm2d(32) if use_batch_norm else nn.Identity(),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2),     # 112 → 224
-            nn.BatchNorm2d(16) if use_batch_norm else nn.Identity(),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(16, 2, kernel_size=1),  # 2 classes: background, foreground
-        )
-        
+
+        # ── Segmentation head: full U-Net (loaded from unet.pth) ─────────────
+        # Import here to avoid circular imports
+        from models.segmentation import VGG11UNet
+        self.seg_model = VGG11UNet(num_classes=2, use_batch_norm=use_batch_norm)
+
         init_weights(self.classifier)
         init_weights(self.localizer)
-        init_weights(self.seg_head)
-        
-        # Load pretrained weights if available
-        self.load_pretrained_components(classifier_path, localizer_path, unet_path)
-    
+
+        # Load all pretrained weights
+        self._load_pretrained(classifier_path, localizer_path, unet_path)
+
+    # ── forward ──────────────────────────────────────────────────────────────
     def forward(self, x):
-        # Shared backbone
-        features = self.backbone(x)  # (B, 512, 7, 7)
-        
-        # Classification
+        """
+        Returns a dict:
+            {
+                'classification': (B, num_classes)   raw logits
+                'localization'  : (B, 4)              [cx, cy, w, h] pixel space
+                'segmentation'  : (B, 2, H, W)        raw logits
+            }
+        """
+        features = self.backbone(x)          # (B, 512, 7, 7)
+
         cls_logits = self.classifier(features)
-        
-        # Localization
-        bbox = self.localizer(features) * 224  # IMAGE_SIZE = 224
-        
-        # Segmentation
-        seg_logits = self.seg_head(features)  # (B, 2, 224, 224)
-        
-        return cls_logits, bbox, seg_logits
-    
-    def load_pretrained_components(self, cls_path=None, loc_path=None, seg_path=None):
-        """Load pretrained weights for individual components"""
+        bbox       = self.localizer(features) * 224   # scale [0,1] → pixel space
+        seg_logits = self.seg_model(x)                # full U-Net takes raw image
+
+        return {
+            'classification': cls_logits,
+            'localization'  : bbox,
+            'segmentation'  : seg_logits,
+        }
+
+    # ── weight loading ───────────────────────────────────────────────────────
+    def _load_pretrained(self, cls_path, loc_path, seg_path):
+        """Load backbone + heads from the three individual checkpoints."""
+
+        # ── classifier.pth → backbone + classifier head ──
         if cls_path and os.path.exists(cls_path):
-            checkpoint = torch.load(cls_path, map_location='cpu')
-            state_dict = checkpoint.get('model_state_dict', checkpoint)
-            # Filter backbone and classifier weights
-            backbone_state = {k.replace('backbone.', ''): v for k, v in state_dict.items() 
-                            if k.startswith('backbone.')}
-            classifier_state = {k.replace('classifier.', ''): v for k, v in state_dict.items()
-                              if k.startswith('classifier.')}
-            if backbone_state:
-                self.backbone.load_state_dict(backbone_state, strict=False)
+            ckpt = torch.load(cls_path, map_location='cpu')
+            sd   = ckpt.get('model_state_dict', ckpt)
+
+            backbone_sd = {k[len('backbone.'):]: v
+                           for k, v in sd.items() if k.startswith('backbone.')}
+            classifier_sd = {k[len('classifier.'):]: v
+                             for k, v in sd.items() if k.startswith('classifier.')}
+
+            if backbone_sd:
+                self.backbone.load_state_dict(backbone_sd, strict=False)
                 print(f"  Loaded backbone from {cls_path}")
-            if classifier_state:
-                self.classifier.load_state_dict(classifier_state, strict=False)
+            if classifier_sd:
+                self.classifier.load_state_dict(classifier_sd, strict=False)
                 print(f"  Loaded classifier from {cls_path}")
-        
+
+        # ── localizer.pth → localization head ──
         if loc_path and os.path.exists(loc_path):
-            checkpoint = torch.load(loc_path, map_location='cpu')
-            state_dict = checkpoint.get('model_state_dict', checkpoint)
-            localizer_state = {k.replace('regressor.', ''): v for k, v in state_dict.items()
-                             if 'regressor' in k}
-            if localizer_state:
-                self.localizer.load_state_dict(localizer_state, strict=False)
+            ckpt = torch.load(loc_path, map_location='cpu')
+            sd   = ckpt.get('model_state_dict', ckpt)
+
+            # The saved localizer used the key "regressor.*"; we map to "localizer.*"
+            localizer_sd = {k[len('regressor.'):]: v
+                            for k, v in sd.items() if k.startswith('regressor.')}
+            if localizer_sd:
+                self.localizer.load_state_dict(localizer_sd, strict=False)
                 print(f"  Loaded localizer from {loc_path}")
-        
-        # Note: For segmentation, the full U-Net architecture is different from our lightweight decoder
-        # So we don't load those weights here
+
+        # ── unet.pth → full segmentation model ──
+        if seg_path and os.path.exists(seg_path):
+            ckpt = torch.load(seg_path, map_location='cpu')
+            sd   = ckpt.get('model_state_dict', ckpt)
+            self.seg_model.load_state_dict(sd, strict=False)
+            print(f"  Loaded segmentation model from {seg_path}")
