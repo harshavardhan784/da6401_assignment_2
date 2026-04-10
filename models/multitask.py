@@ -15,7 +15,7 @@ class MultiTaskPerceptionModel(nn.Module):
       - Localization    -> (B, 4)   [cx, cy, w, h] pixel space [0..224]
       - Segmentation    -> (B, 3, H, W)  trimap classes: 0=pet, 1=background, 2=border
     """
-    def __init__(self, num_classes=37, num_seg_classes=3,   # ← 3, not 2
+    def __init__(self, num_classes=37, num_seg_classes=3,
                  use_batch_norm=True, dropout_p=0.5):
         super().__init__()
 
@@ -41,33 +41,20 @@ class MultiTaskPerceptionModel(nn.Module):
         self.backbone = VGG11(in_channels=3, use_batch_norm=use_batch_norm)
 
         # ── Classification head ───────────────────────────────────────────────
-        # Sequential index → layer:
-        #   0: Flatten
-        #   1: Linear(25088, 4096)
-        #   2: BatchNorm1d(4096)
-        #   3: ReLU
-        #   4: CustomDropout
-        #   5: Linear(4096, 4096)
-        #   6: BatchNorm1d(4096)
-        #   7: ReLU
-        #   8: CustomDropout
-        #   9: Linear(4096, 37)
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 4096),
-            nn.BatchNorm1d(4096),
+            nn.BatchNorm1d(4096) if use_batch_norm else nn.Identity(),
             nn.ReLU(inplace=True),
             CustomDropout(p=dropout_p),
             nn.Linear(4096, 4096),
-            nn.BatchNorm1d(4096),
+            nn.BatchNorm1d(4096) if use_batch_norm else nn.Identity(),
             nn.ReLU(inplace=True),
             CustomDropout(p=dropout_p),
             nn.Linear(4096, num_classes),
         )
 
         # ── Localization head ─────────────────────────────────────────────────
-        # Matches VGG11Localizer's self.regressor exactly.
-        # Output: Sigmoid × 224 → [0..224] pixel-space [cx, cy, w, h]
         self.localizer = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 7 * 7, 1024),
@@ -94,7 +81,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
         self.eval()
 
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     def forward(self, x):
         """
         Single forward pass → all three task outputs.
@@ -106,9 +93,9 @@ class MultiTaskPerceptionModel(nn.Module):
             }
         """
         features   = self.backbone(x)                  # (B, 512, 7, 7)
-        cls_logits = self.classifier(features)          # (B, 37)
+        cls_logits = self.classifier(features)         # (B, 37)
         bbox       = self.localizer(features) * 224.0  # (B, 4) Sigmoid*224
-        seg_logits = self.seg_model(x)                  # (B, 3, H, W)
+        seg_logits = self.seg_model(x)                 # (B, 3, H, W)
 
         return {
             'classification': cls_logits,
@@ -116,9 +103,12 @@ class MultiTaskPerceptionModel(nn.Module):
             'segmentation'  : seg_logits,
         }
 
-    # ─────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     def _load_pretrained(self, cls_path, loc_path, seg_path):
         """Load weights from the three individual task checkpoints."""
+        # Helper to remove 'module.' prefix if present (DataParallel)
+        def strip_module(key):
+            return key.replace('module.', '')
 
         # ── 1. Classifier + backbone ──────────────────────────────────────────
         if cls_path and os.path.exists(cls_path):
@@ -126,66 +116,81 @@ class MultiTaskPerceptionModel(nn.Module):
             sd   = ckpt.get('model_state_dict', ckpt)
 
             print(f"Loading from {cls_path}...")
+            print("  Sample keys from checkpoint:", list(sd.keys())[:5])
 
-            # Backbone weights  (strip 'backbone.' prefix)
-            backbone_sd = {k[len('backbone.'):]: v
-                           for k, v in sd.items() if k.startswith('backbone.')}
+            # Backbone weights (strip 'backbone.' prefix)
+            backbone_sd = {}
+            classifier_sd = {}
+
+            for k, v in sd.items():
+                k_clean = strip_module(k)
+                if k_clean.startswith('backbone.'):
+                    backbone_sd[k_clean[len('backbone.'):]] = v
+                elif k_clean.startswith('classifier.'):
+                    classifier_sd[k_clean[len('classifier.'):]] = v
+
+            # Load backbone
             if backbone_sd:
-                self.backbone.load_state_dict(backbone_sd, strict=False)
+                missing, unexpected = self.backbone.load_state_dict(backbone_sd, strict=False)
                 print(f"  ✓ Loaded backbone: {len(backbone_sd)} keys")
-
-            # ── BUG FIX ────────────────────────────────────────────────────
-            # WRONG (old): classifier_sd[k] = v  → key is 'classifier.1.weight'
-            #              self.classifier.load_state_dict expects '1.weight'
-            #              → ALL keys are "unexpected", NOTHING loads, F1=0
-            #
-            # FIXED: strip the 'classifier.' prefix so keys are '1.weight' etc.
-            classifier_sd = {k[len('classifier.'):]: v
-                             for k, v in sd.items() if k.startswith('classifier.')}
-
-            if classifier_sd:
-                missing, unexpected = self.classifier.load_state_dict(
-                    classifier_sd, strict=False)
-                print(f"  ✓ Loaded classifier: {len(classifier_sd)} keys")
                 if missing:
-                    print(f"    Missing (buffers expected): {missing[:3]}...")
+                    print(f"    Missing (ignored): {missing[:3]}...")
                 if unexpected:
                     print(f"    Unexpected: {unexpected[:3]}...")
+            else:
+                print("  ⚠ No backbone keys found!")
 
-                # Sanity-check: weight should be non-trivially non-zero
-                with torch.no_grad():
-                    w = self.classifier[1].weight
-                    print(f"  ✓ Classifier[1] weight  mean={w.mean().item():.6f}  "
-                          f"std={w.std().item():.6f}")
-                    if w.std().item() < 1e-4:
-                        print("  ⚠ WARNING: classifier weights look degenerate — "
-                              "check the checkpoint file.")
+            # Load classifier
+            if classifier_sd:
+                # Temporarily use strict=True to catch mismatches during debug
+                try:
+                    self.classifier.load_state_dict(classifier_sd, strict=True)
+                    print(f"  ✓ Loaded classifier: {len(classifier_sd)} keys (strict match)")
+                except RuntimeError as e:
+                    print(f"  Strict load failed: {e}")
+                    # Fallback to non-strict
+                    missing, unexpected = self.classifier.load_state_dict(classifier_sd, strict=False)
+                    print(f"  ✓ Loaded classifier (non-strict): {len(classifier_sd)} keys")
+                    if missing:
+                        print(f"    Missing: {missing[:3]}...")
+                    if unexpected:
+                        print(f"    Unexpected: {unexpected[:3]}...")
+            else:
+                print("  ⚠ No classifier keys found!")
+
+            # Verify that weights actually changed (sanity check)
+            with torch.no_grad():
+                init_weight = self.classifier[1].weight[0, 0].item()
+                # Force a dummy forward to ensure any lazy init is done
+                dummy = torch.zeros(1, 512, 7, 7)
+                _ = self.classifier(dummy)
+                loaded_weight = self.classifier[1].weight[0, 0].item()
+                print(f"  Weight[0,0] after loading: {loaded_weight:.6f}")
+                if abs(loaded_weight - init_weight) < 1e-6:
+                    print("  ⚠ WARNING: weights did NOT change → loading failed!")
+                else:
+                    print("  ✓ Weights changed – loading successful")
 
         # ── 2. Localizer ──────────────────────────────────────────────────────
         if loc_path and os.path.exists(loc_path):
             ckpt = torch.load(loc_path, map_location='cpu', weights_only=False)
             sd   = ckpt.get('model_state_dict', ckpt)
 
-            # VGG11Localizer stores the regression head as self.regressor
-            # Strip 'regressor.' prefix → bare indices '1.weight', '2.weight'…
-            # which match self.localizer (nn.Sequential with same structure).
             localizer_sd = {}
             for k, v in sd.items():
-                if k.startswith('regressor.'):
-                    localizer_sd[k[len('regressor.'):]] = v
-                elif k.startswith('localizer.'):          # fallback key name
-                    localizer_sd[k[len('localizer.'):]] = v
+                k_clean = strip_module(k)
+                if k_clean.startswith('regressor.'):
+                    localizer_sd[k_clean[len('regressor.'):]] = v
+                elif k_clean.startswith('localizer.'):
+                    localizer_sd[k_clean[len('localizer.'):]] = v
 
             if localizer_sd:
-                missing, _ = self.localizer.load_state_dict(
-                    localizer_sd, strict=False)
-                print(f"  ✓ Loaded localizer from {loc_path} "
-                      f"({len(localizer_sd)} keys)")
+                missing, unexpected = self.localizer.load_state_dict(localizer_sd, strict=False)
+                print(f"  ✓ Loaded localizer from {loc_path} ({len(localizer_sd)} keys)")
                 if missing:
                     print(f"    Missing: {missing[:3]}...")
             else:
-                print(f"  ⚠ No localizer keys found in {loc_path}. "
-                      f"Available keys: {list(sd.keys())[:5]}")
+                print(f"  ⚠ No localizer keys found in {loc_path}.")
 
         # ── 3. Segmentation U-Net ─────────────────────────────────────────────
         if seg_path and os.path.exists(seg_path):
@@ -202,7 +207,10 @@ class MultiTaskPerceptionModel(nn.Module):
                                                use_batch_norm=True)
                     print(f"  ✓ Re-created seg_model with num_classes={saved_nc}")
 
+            # Load segmentation weights
             missing, unexpected = self.seg_model.load_state_dict(sd, strict=False)
             print(f"  ✓ Loaded seg model from {seg_path} ({len(sd)} keys)")
             if missing:
-                print(f"    Missing: {missing[:3]}...")
+                print(f"    Missing (expected): {missing[:3]}...")
+            if unexpected:
+                print(f"    Unexpected: {unexpected[:3]}...")
