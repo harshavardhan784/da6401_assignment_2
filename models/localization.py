@@ -1,70 +1,80 @@
-"""Localization modules
 """
-
+Localization model for DA6401 Assignment 2
+"""
+import os
 import torch
 import torch.nn as nn
-from models.vgg11 import VGG11Encoder
-from models.layers import CustomDropout
-import torchvision
+from .vgg11 import VGG11, init_weights
+from .layers import CustomDropout
+
 
 class VGG11Localizer(nn.Module):
-    """VGG11-based localizer."""
-
-    def __init__(self, in_channels: int = 3, dropout_p: float = 0.5, use_batch_norm: bool = True):
-        """
-        Initialize the VGG11Localizer model.
-
-        Args:
-            in_channels: Number of input channels.
-            dropout_p: Dropout probability for the localization head.
-            use_batch_norm: Whether to use BatchNorm in the encoder.
-        """
-        super(VGG11Localizer, self).__init__()
+    """
+    VGG11-based object localizer.
+    Output: [cx, cy, w, h] in pixel space (0 to IMAGE_SIZE)
+    """
+    def __init__(self, in_channels=3, use_batch_norm=True, image_size=224, freeze_backbone=False):
+        super().__init__()
+        self.image_size = image_size
+        self.backbone = VGG11(in_channels, use_batch_norm)
         
-        # Shared encoder (same as VGG11)
-        self.encoder = VGG11Encoder(in_channels=in_channels, use_batch_norm=use_batch_norm)
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
         
-        # Localization head (regression to 4 coordinates in pixel space)
-        self.localization_head = nn.Sequential(
+        # Regression head
+        self.regressor = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(512 * 7 * 7, 4096),
+            nn.Linear(512 * 7 * 7, 1024),
+            nn.BatchNorm1d(1024) if use_batch_norm else nn.Identity(),
             nn.ReLU(inplace=True),
-            CustomDropout(p=dropout_p),
-            nn.Linear(4096, 4096),
+            CustomDropout(0.3),
+            nn.Linear(1024, 256),
             nn.ReLU(inplace=True),
-            CustomDropout(p=dropout_p),
-            nn.Linear(4096, 4)  # [x_center, y_center, width, height] in pixel space
+            nn.Linear(256, 4),
+            nn.Sigmoid(),  # Output in [0, 1] range
         )
-        
-        self._initialize_weights()
-    
-    def _initialize_weights(self):
-        """Initialize weights."""
-        for module in self.localization_head.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.normal_(module.weight, 0, 0.01)
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
+        init_weights(self.regressor)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for localization model.
-        Args:
-            x: Input tensor of shape [B, in_channels, H, W] (normalized, 224x224).
+    def load_backbone_weights(self, checkpoint_path):
+        """Load pretrained backbone weights from classifier checkpoint"""
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        state_dict = checkpoint.get('model_state_dict', checkpoint)
         
-        Returns:
-            Bounding box coordinates [B, 4] in (x_center, y_center, width, height) 
-            format in original image pixel space (not normalized).
-        """
-        # Encode
-        features = self.encoder(x)
+        # Filter backbone weights
+        backbone_state = {}
+        for k, v in state_dict.items():
+            if k.startswith('backbone.'):
+                backbone_state[k.replace('backbone.', '')] = v
+            elif k.startswith('backbone'):
+                backbone_state[k] = v
         
-        # Regress bounding box coordinates
-        bbox = self.localization_head(features)
-        
-        # Convert from normalized coordinates (0-1 range from network) to pixel space
-        # Network outputs values in [0, 1] range via sigmoid in training, but here we return raw
-        # The loss function will handle the scaling or we can scale to 224
-        # For the autograder, return in pixel space (224x224 image)
-        bbox_pixel = bbox * 224  # Scale to 224x224 image size
-        
-        return bbox_pixel
+        if backbone_state:
+            self.backbone.load_state_dict(backbone_state, strict=True)
+            print(f"  Loaded backbone weights from {checkpoint_path}")
+        else:
+            print(f"  Warning: No backbone weights found in {checkpoint_path}")
+
+    def forward(self, x):
+        features = self.backbone(x)
+        output = self.regressor(features)
+        return output * self.image_size  # Scale to pixel space
+
+
+class LocalizationLoss(nn.Module):
+    """
+    Combined loss for localization: MSE + IoU loss
+    """
+    def __init__(self, mse_weight=0.5, iou_weight=0.5):
+        super().__init__()
+        self.mse_weight = mse_weight
+        self.iou_weight = iou_weight
+        self.mse_loss = nn.MSELoss()
+        # Import IoULoss here to avoid circular import
+        from losses.iou_loss import IoULoss
+        self.iou_loss = IoULoss('mean')
+    
+    def forward(self, pred, target, image_size=224):
+        mse = self.mse_loss(pred, target) / (image_size ** 2)
+        iou = self.iou_loss(pred, target)
+        return self.mse_weight * mse + self.iou_weight * iou

@@ -1,327 +1,340 @@
-"""Training entrypoint
 """
-
+Training script for DA6401 Assignment 2
+Supports training classification, localization, and segmentation models
 """
-Complete Training Pipeline for Oxford-IIIT Pet Dataset
-Supports GPU/CPU, multi-threaded data loading, and all three tasks
-"""
-
-from models.classification import VGG11Classifier
-from data.pets_dataset import get_dataloaders
-from models.layers import CustomDropout
-from losses.iou_loss import IoULoss
-from sklearn.metrics import f1_score as sk_f1
-import torch.nn as nn
-import torch
-import os, time, gc, math
+import os
+import argparse
+import time
+import gc
+import math
+import random
 import numpy as np
-from sklearn.metrics import f1_score as sk_f1
-from typing import Tuple, Optional, Callable, List
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-import torchvision.transforms.functional as TF
-
-from PIL import Image
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
-from collections import Counter
-import wandb
-from models.vgg11 import init_weights
+from sklearn.metrics import f1_score as sk_f1
 
-DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-class FocalLoss(nn.Module):
-    def __init__(self, weight=None, gamma=2.0, reduction='mean'):
-        super(FocalLoss, self).__init__()
-        self.weight = weight  # class weights
-        self.gamma = gamma
-        self.reduction = reduction
+from data.pets_dataset import get_dataloaders
+from models.classification import VGG11Classifier
+from models.localization import VGG11Localizer, LocalizationLoss
+from models.segmentation import VGG11UNet, CombinedSegmentationLoss
+from losses.iou_loss import IoULoss
 
-    def forward(self, inputs, targets):
-        # Cross entropy loss (no reduction)
-        ce_loss = F.cross_entropy(inputs, targets, weight=self.weight, reduction='none')
-        
-        # Get probabilities
-        pt = torch.exp(-ce_loss)  # pt = softmax prob of true class
-        
-        # Focal loss
-        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
-        
-        if self.reduction == 'mean':
-            return focal_loss.mean()
-        elif self.reduction == 'sum':
-            return focal_loss.sum()
-        else:
-            return focal_loss
+
+# Constants
+IMAGE_SIZE = 224
+NUM_CLASSES = 37
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+def set_seed(seed=42):
+    """Set seed for reproducibility"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 class Trainer:
-    def __init__(self, model, task, device=DEVICE, class_weights = None,
+    def __init__(self, model, task, device=DEVICE,
                  lr=1e-3, weight_decay=1e-4,
                  num_epochs=30, patience=7,
-                 warmup_epochs=5,
-                 loc_mse_w=0.5):
-        self.model        = model.to(device)
-        # if torch.cuda.device_count() > 1:
-        #     print(f"  Using {torch.cuda.device_count()} GPUs via DataParallel")
-        #     self.model = nn.DataParallel(self.model)
-
-        self.task         = task
-        self.device       = device
-        self.num_epochs   = num_epochs
-        self.patience     = patience
-        self.warmup_epochs= warmup_epochs
-        self.loc_mse_w    = loc_mse_w
-        self.base_lr      = lr
-        self.class_weights    = class_weights
-
-        # losses — NO label smoothing (hurts small datasets)
-        # self.loss_cls = nn.CrossEntropyLoss()
-        self.loss_cls = FocalLoss(gamma=2.0)
-        self.loss_iou = IoULoss('mean')
-        self.loss_mse = nn.MSELoss()
-        self.loss_seg = nn.CrossEntropyLoss()
-
-        self.opt = optim.AdamW(
+                 warmup_epochs=5, use_amp=False):
+        
+        self.model = model.to(device)
+        self.task = task
+        self.device = device
+        self.num_epochs = num_epochs
+        self.patience = patience
+        self.warmup_epochs = warmup_epochs
+        self.base_lr = lr
+        self.use_amp = use_amp and torch.cuda.is_available()
+        
+        # Loss functions based on task
+        if task == 'classification':
+            self.criterion = nn.CrossEntropyLoss()
+        elif task == 'localization':
+            self.criterion = LocalizationLoss(mse_weight=0.5, iou_weight=0.5)
+        elif task == 'segmentation':
+            self.criterion = CombinedSegmentationLoss(ce_weight=1.0, dice_weight=1.0, use_focal=True)
+        
+        # Optimizer with weight decay
+        self.optimizer = optim.AdamW(
             filter(lambda p: p.requires_grad, model.parameters()),
             lr=lr, weight_decay=weight_decay
         )
-        # cosine decay after warmup
-        self.sched = optim.lr_scheduler.CosineAnnealingLR(
-            self.opt, T_max=num_epochs - warmup_epochs, eta_min=lr/100
+        
+        # Cosine annealing scheduler
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=num_epochs - warmup_epochs, eta_min=lr/100
         )
-
-        self.best_val  = float('inf')
-        self.es_count  = 0
-
+        
+        # Mixed precision scaler
+        self.scaler = torch.amp.GradScaler() if self.use_amp else None
+        
+        self.best_val = float('inf')
+        self.es_count = 0
+    
     def _warmup_lr(self, epoch):
-        """Linear warmup: scale LR from base_lr/10 → base_lr over warmup_epochs."""
+        """Linear warmup from 0.1*base_lr to base_lr"""
         if epoch <= self.warmup_epochs:
-            scale = (epoch / self.warmup_epochs)
-            for g in self.opt.param_groups:
+            scale = epoch / self.warmup_epochs
+            for g in self.optimizer.param_groups:
                 g['lr'] = self.base_lr * max(scale, 0.1)
-
-    def _grad_norms(self):
-        total = 0.0
-        d     = {}
-        for name, p in self.model.named_parameters():
-            if p.grad is not None:
-                n = p.grad.detach().norm(2).item()
-                d[f'grad/{name}'] = n
-                total += n**2
-        d['grad/total'] = math.sqrt(total)
-        return d
-
-    # ── train one epoch ───────────────────────────────────────────────────────
-    def _train_epoch(self, loader, epoch, gstep, use_wb):
+    
+    def _train_epoch(self, loader, epoch):
         self.model.train()
-        run_loss = 0.0
-        run_corr = 0
-        run_tot  = 0
-        n        = 0
-
-        pbar = tqdm(loader, desc=f'Ep {epoch:>3} [Train]', leave=False)
+        running_loss = 0.0
+        running_correct = 0
+        running_total = 0
+        num_batches = 0
+        
+        pbar = tqdm(loader, desc=f'Epoch {epoch:3d} [Train]', leave=False)
+        
         for batch in pbar:
             if self.task == 'classification':
-                imgs, labels = batch
-                imgs, labels = imgs.to(self.device), labels.to(self.device)
-                self.opt.zero_grad()
-                logits = self.model(imgs)
-                loss   = self.loss_cls(logits, labels)
-                loss.backward()
-                run_corr += (logits.argmax(1)==labels).sum().item()
-                run_tot  += labels.size(0)
-
+                images, labels = batch
+                images, labels = images.to(self.device), labels.to(self.device)
+                
+                self.optimizer.zero_grad()
+                
+                if self.use_amp:
+                    with torch.amp.autocast('cuda'):
+                        logits = self.model(images)
+                        loss = self.criterion(logits, labels)
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    logits = self.model(images)
+                    loss = self.criterion(logits, labels)
+                    loss.backward()
+                    self.optimizer.step()
+                
+                running_correct += (logits.argmax(1) == labels).sum().item()
+                running_total += labels.size(0)
+                
             elif self.task == 'localization':
-                imgs, bboxes = batch
-                imgs, bboxes = imgs.to(self.device), bboxes.to(self.device)
-                self.opt.zero_grad()
-                pred     = self.model(imgs)
-                iou_loss = self.loss_iou(pred, bboxes)
-                mse_loss = self.loss_mse(pred, bboxes) / (IMAGE_SIZE**2)
-                loss     = self.loc_mse_w*mse_loss + (1-self.loc_mse_w)*iou_loss
+                images, bboxes = batch
+                images, bboxes = images.to(self.device), bboxes.to(self.device)
+                
+                self.optimizer.zero_grad()
+                pred = self.model(images)
+                loss = self.criterion(pred, bboxes, IMAGE_SIZE)
                 loss.backward()
-
+                self.optimizer.step()
+                
             elif self.task == 'segmentation':
-                imgs, masks = batch
-                imgs, masks = imgs.to(self.device), masks.to(self.device)
-                self.opt.zero_grad()
-                logits = self.model(imgs)
-                loss   = self.loss_seg(logits, masks)
+                images, masks = batch
+                images, masks = images.to(self.device), masks.to(self.device)
+                
+                self.optimizer.zero_grad()
+                logits = self.model(images)
+                loss = self.criterion(logits, masks)
                 loss.backward()
-
+                self.optimizer.step()
+            
+            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-            # log grads every 100 steps using the same gstep counter
-            if gstep % 100 == 0:
-                gd = self._grad_norms()
-                if use_wb:
-                    wandb.log(gd, step=gstep)
-
-            self.opt.step()
-            run_loss += loss.item()
-            n        += 1
-            gstep    += 1
+            
+            running_loss += loss.item()
+            num_batches += 1
+            
             pbar.set_postfix(loss=f'{loss.item():.4f}')
-            if n % 50 == 0: torch.cuda.empty_cache()
-
-        tr_loss = run_loss / max(n,1)
-        tr_acc  = run_corr / max(run_tot,1) if self.task=='classification' else None
-        return tr_loss, tr_acc, gstep
-
-    # ── validate ──────────────────────────────────────────────────────────────
+            
+            if num_batches % 50 == 0:
+                torch.cuda.empty_cache()
+        
+        train_loss = running_loss / max(num_batches, 1)
+        train_acc = running_correct / max(running_total, 1) if self.task == 'classification' else None
+        
+        return train_loss, train_acc
+    
     @torch.no_grad()
     def _val_epoch(self, loader, epoch):
         self.model.eval()
-        run_loss = 0.0
-        corr=tot=iou_s=dice_s=0
-        n=0
-        all_preds, all_labels = [], []
-
-
-        pbar = tqdm(loader, desc=f'Ep {epoch:>3} [Val  ]', leave=False)
+        running_loss = 0.0
+        num_batches = 0
+        
+        # Metrics accumulation
+        all_preds = []
+        all_labels = []
+        total_iou = 0.0
+        total_dice = 0.0
+        total_correct = 0
+        total_samples = 0
+        
+        pbar = tqdm(loader, desc=f'Epoch {epoch:3d} [Val  ]', leave=False)
+        
         for batch in pbar:
-            # In _val_epoch, replace the classification block:
             if self.task == 'classification':
-                imgs, labels = batch
-                imgs, labels = imgs.to(self.device), labels.to(self.device)
-                logits = self.model(imgs)
-                loss   = self.loss_cls(logits, labels)
-                preds_batch = logits.argmax(1).cpu().numpy()
-                labels_batch = labels.cpu().numpy()
-                all_preds.extend(preds_batch)
-                all_labels.extend(labels_batch)
-                corr  += (logits.argmax(1)==labels).sum().item()
-                tot   += labels.size(0)
-
+                images, labels = batch
+                images, labels = images.to(self.device), labels.to(self.device)
+                
+                logits = self.model(images)
+                loss = self.criterion(logits, labels)
+                
+                preds = logits.argmax(1).cpu().numpy()
+                all_preds.extend(preds)
+                all_labels.extend(labels.cpu().numpy())
+                total_correct += (logits.argmax(1) == labels).sum().item()
+                total_samples += labels.size(0)
+                
             elif self.task == 'localization':
-                imgs, bboxes = batch
-                imgs, bboxes = imgs.to(self.device), bboxes.to(self.device)
-                pred     = self.model(imgs)
-                iou_loss = self.loss_iou(pred, bboxes)
-                mse_loss = self.loss_mse(pred, bboxes) / (IMAGE_SIZE**2)
-                loss     = self.loc_mse_w*mse_loss + (1-self.loc_mse_w)*iou_loss
-                iou_s   += 1.0 - self.loss_iou(pred, bboxes).item()
-
+                images, bboxes = batch
+                images, bboxes = images.to(self.device), bboxes.to(self.device)
+                
+                pred = self.model(images)
+                loss = self.criterion(pred, bboxes, IMAGE_SIZE)
+                
+                # Compute IoU for monitoring
+                iou_loss = IoULoss('none')(pred, bboxes)
+                total_iou += (1.0 - iou_loss).sum().item()
+                total_samples += bboxes.size(0)
+                
             elif self.task == 'segmentation':
-                imgs, masks = batch
-                imgs, masks = imgs.to(self.device), masks.to(self.device)
-                logits = self.model(imgs)
-                loss   = self.loss_seg(logits, masks)
-                pm     = logits.argmax(1)
-                inter  = (pm*masks).sum().float()
-                dice_s+= (2.*inter/(pm.sum()+masks.sum()+1e-7)).item()
-
-            run_loss += loss.item()
-            n        += 1
+                images, masks = batch
+                images, masks = images.to(self.device), masks.to(self.device)
+                
+                logits = self.model(images)
+                loss = self.criterion(logits, masks)
+                
+                # Compute Dice score
+                pred_masks = logits.argmax(1)
+                intersection = (pred_masks * masks).sum().float()
+                dice = (2. * intersection / (pred_masks.sum() + masks.sum() + 1e-7))
+                total_dice += dice.item()
+                total_samples += 1
+            
+            running_loss += loss.item()
+            num_batches += 1
             pbar.set_postfix(loss=f'{loss.item():.4f}')
-
-        vl = run_loss/max(n,1)
+        
+        val_loss = running_loss / max(num_batches, 1)
         metrics = {}
-        if self.task=='classification':
+        
+        if self.task == 'classification':
             f1 = sk_f1(all_labels, all_preds, average='macro', zero_division=0)
-            metrics['accuracy'] = corr/max(tot,1)
+            metrics['accuracy'] = total_correct / max(total_samples, 1)
             metrics['f1_macro'] = f1
-
-        elif self.task=='localization':   metrics['mean_iou'] = iou_s/max(n,1)
-        elif self.task=='segmentation':   metrics['dice']     = dice_s/max(n,1)
-        return vl, metrics
-
-    # ── full loop ─────────────────────────────────────────────────────────────
-    def fit(self, tr_loader, vl_loader, ckpt_name='best_model', use_wb=True):
+        elif self.task == 'localization':
+            metrics['mean_iou'] = total_iou / max(total_samples, 1)
+        elif self.task == 'segmentation':
+            metrics['dice'] = total_dice / max(total_samples, 1)
+        
+        return val_loss, metrics
+    
+    def fit(self, train_loader, val_loader, ckpt_name='best_model'):
         print(f"\n{'='*62}")
-        print(f' Task={self.task.upper()}  Device={self.device}  '
-              f'Epochs={self.num_epochs}  Patience={self.patience}')
-        print(f"{'='*62}")
-
-        gstep = 0
-        for ep in range(1, self.num_epochs+1):
-            self._warmup_lr(ep)
-            t0 = time.time()
-
-            tr_loss, tr_acc, gstep = self._train_epoch(tr_loader, ep, gstep, use_wb)
-            vl_loss, metrics       = self._val_epoch(vl_loader, ep)
-
-            # scheduler steps after warmup
-            if ep > self.warmup_epochs:
-                self.sched.step()
-
-            lr_now  = self.opt.param_groups[0]['lr']
-            elapsed = time.time()-t0
-
-            # ── console print ─────────────────────────────────────────────────
-            acc_s = f'  TrAcc:{tr_acc:.4f}' if tr_acc is not None else ''
-            met_s = '  '.join(f'Val {k}:{v:.4f}' for k,v in metrics.items())
-            print(f'Ep {ep:>3}/{self.num_epochs}  '
-                  f'TrLoss:{tr_loss:.4f}{acc_s}  '
-                  f'VlLoss:{vl_loss:.4f}  {met_s}  '
-                  f'LR:{lr_now:.2e}  ({elapsed:.1f}s)')
-
-            # ── W&B — ALL metrics logged at the SAME gstep ────────────────────
-            # This is the fix for the step-conflict warning:
-            # grad norms were already logged at gstep values 0,100,200,...
-            # Epoch-level metrics are logged at the CURRENT gstep value
-            # (end of epoch), so steps are always increasing.
-            if use_wb:
-                ld = {
-                    'epoch':       ep,
-                    'train/loss':  tr_loss,
-                    'val/loss':    vl_loss,
-                    'lr':          lr_now,
-                    'epoch_time':  elapsed,
-                }
-                if tr_acc is not None: ld['train/accuracy'] = tr_acc
-                for k,v in metrics.items(): ld[f'val/{k}'] = v
-                wandb.log(ld, step=gstep)   # <── same step counter as grad logs
-
-            # ── checkpoint + early stop ───────────────────────────────────────
-            if vl_loss < self.best_val:
-                self.best_val = vl_loss
+        print(f" Task={self.task.upper()}  Device={self.device}  "
+              f"Epochs={self.num_epochs}  Patience={self.patience}")
+        print(f"{'='*62}\n")
+        
+        for epoch in range(1, self.num_epochs + 1):
+            self._warmup_lr(epoch)
+            start_time = time.time()
+            
+            train_loss, train_acc = self._train_epoch(train_loader, epoch)
+            val_loss, metrics = self._val_epoch(val_loader, epoch)
+            
+            if epoch > self.warmup_epochs:
+                self.scheduler.step()
+            
+            current_lr = self.optimizer.param_groups[0]['lr']
+            epoch_time = time.time() - start_time
+            
+            # Print results
+            acc_str = f"  Train Acc: {train_acc:.4f}" if train_acc is not None else ""
+            metrics_str = "  ".join(f"Val {k}: {v:.4f}" for k, v in metrics.items())
+            print(f"Epoch {epoch:3d}/{self.num_epochs}  "
+                  f"Train Loss: {train_loss:.4f}{acc_str}  "
+                  f"Val Loss: {val_loss:.4f}  {metrics_str}  "
+                  f"LR: {current_lr:.2e}  ({epoch_time:.1f}s)")
+            
+            # Checkpoint and early stopping
+            if val_loss < self.best_val:
+                self.best_val = val_loss
                 self.es_count = 0
-                path = f'/kaggle/working/{ckpt_name}.pth'
-                torch.save({'epoch':ep,'model_state_dict':self.model.state_dict(),
-                            'val_loss':vl_loss,'metrics':metrics}, path)
-                print(f'  ✓ checkpoint → {path}')
+                
+                checkpoint = {
+                    'epoch': epoch,
+                    'model_state_dict': self.model.state_dict(),
+                    'val_loss': val_loss,
+                    'metrics': metrics,
+                }
+                os.makedirs('checkpoints', exist_ok=True)
+                torch.save(checkpoint, f'checkpoints/{ckpt_name}.pth')
+                print(f"  ✓ Saved checkpoint: checkpoints/{ckpt_name}.pth")
             else:
                 self.es_count += 1
-
+            
             if self.es_count >= self.patience:
-                print(f'\n⏹ Early stop at epoch {ep}')
+                print(f"\n⏹ Early stopping at epoch {epoch}")
                 break
+            
+            torch.cuda.empty_cache()
+            gc.collect()
+        
+        print(f"\n✓ Done. Best val loss: {self.best_val:.4f}")
 
-            torch.cuda.empty_cache(); gc.collect()
 
-        print(f'\n✅ Done. Best val loss: {self.best_val:.4f}')
-
-
-if __name__ == "__main__":
-    print('\n'+'='*62)
-    print(' TASK 1: VGG11 Classification')
-    print('='*62)
-    DATA_ROOT = "D:\IITM\DL\DL_A2\da6401_assignment_2\data"
-    train_cls, val_cls = get_dataloaders(DATA_ROOT, batch_size=16, task='classification')
-    num_classes = 37
-    USE_WANDB = True
+def main():
+    parser = argparse.ArgumentParser(description='Train DA6401 Assignment 2 models')
+    parser.add_argument('--task', type=str, required=True, 
+                       choices=['classification', 'localization', 'segmentation'],
+                       help='Task to train')
+    parser.add_argument('--data_root', type=str, required=True,
+                       help='Path to dataset root directory')
+    parser.add_argument('--batch_size', type=int, default=32,
+                       help='Batch size for training')
+    parser.add_argument('--epochs', type=int, default=50,
+                       help='Number of epochs')
+    parser.add_argument('--lr', type=float, default=1e-3,
+                       help='Learning rate')
+    parser.add_argument('--patience', type=int, default=10,
+                       help='Early stopping patience')
+    parser.add_argument('--checkpoint_name', type=str, default=None,
+                       help='Name for checkpoint file')
+    args = parser.parse_args()
     
-    # class_weights = compute_class_weights(train_cls, num_classes, DEVICE)
-    # print(class_weights)
+    # Set seed
+    set_seed(42)
+    
+    # Get dataloaders
+    train_loader, val_loader = get_dataloaders(
+        args.data_root, 
+        batch_size=args.batch_size, 
+        task=args.task
+    )
+    
+    # Create model based on task
+    if args.task == 'classification':
+        model = VGG11Classifier(num_classes=NUM_CLASSES, dropout_p=0.5, use_batch_norm=True)
+        ckpt_name = args.checkpoint_name or 'classifier'
+    elif args.task == 'localization':
+        model = VGG11Localizer(use_batch_norm=True, freeze_backbone=False)
+        # Try to load pretrained backbone
+        if os.path.exists('checkpoints/classifier.pth'):
+            model.load_backbone_weights('checkpoints/classifier.pth')
+        ckpt_name = args.checkpoint_name or 'localizer'
+    elif args.task == 'segmentation':
+        model = VGG11UNet(num_classes=2, use_batch_norm=True, freeze_backbone=False)
+        ckpt_name = args.checkpoint_name or 'unet'
+    
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    
+    # Train
+    trainer = Trainer(
+        model, args.task, DEVICE,
+        lr=args.lr, weight_decay=1e-4,
+        num_epochs=args.epochs, patience=args.patience, 
+        warmup_epochs=5, use_amp=True
+    )
+    trainer.fit(train_loader, val_loader, ckpt_name=ckpt_name)
 
-    cls_model = VGG11Classifier(num_classes=37, dropout_p=0.5, use_batch_norm=True)
-    init_weights(cls_model)
-    print(f'Params: {sum(p.numel() for p in cls_model.parameters()):,}')
 
-    if USE_WANDB:
-        wandb.init(project='da6401-oxford-pets', name='vgg11_classification',
-                config=dict(task='classification', epochs=40, bs=32,
-                            lr=5e-4, dropout=0.3, warmup=5, label_smooth=False))
-
-    trainer_cls = Trainer(cls_model, 'classification', DEVICE,
-                        lr=5e-4, weight_decay=1e-4,
-                        num_epochs=40, patience=10, warmup_epochs=5)
-    trainer_cls.fit(train_cls, val_cls, ckpt_name='classifier', use_wb=USE_WANDB)
-
-    if USE_WANDB: wandb.finish()
-    print('\n✅ classifier.pth saved')
+if __name__ == '__main__':
+    main()
