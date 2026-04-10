@@ -27,9 +27,9 @@ class MultiTaskPerceptionModel(nn.Module):
         unet_path = "checkpoints/unet.pth"
         
         # TODO: Replace these with your actual Google Drive file IDs
-        # gdown.download(id="<classifier.pth drive id>", output=classifier_path, quiet=False)
-        # gdown.download(id="<localizer.pth drive id>", output=localizer_path, quiet=False)
-        # gdown.download(id="<unet.pth drive id>", output=unet_path, quiet=False)
+        gdown.download(id="1bQatPpJxWBYuzZA949igWJh5OrADKrYM", output=classifier_path, quiet=False)
+        gdown.download(id="1gKu5L9hSIAFMJuOMxiUqHIVm5EbIScKD", output=localizer_path, quiet=False)
+        gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4", output=unet_path, quiet=False)
         
         # Shared backbone
         self.backbone = VGG11(in_channels=3, use_batch_norm=use_batch_norm)
