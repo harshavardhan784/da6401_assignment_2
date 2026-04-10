@@ -1,6 +1,6 @@
 """
 Multi-task perception model for DA6401 Assignment 2
-AUTOGRADER VERSION - Returns dict as per spec
+FIXED VERSION - Matches notebook architecture
 """
 import os
 import torch
@@ -17,7 +17,6 @@ class MultiTaskPerceptionModel(nn.Module):
       - Segmentation    -> (B, 2, H, W)  binary classes: 0=background, 1=foreground
     
     All tasks share the VGG11 backbone (parameter efficient).
-    Returns dict as required by autograder.
     """
     def __init__(self, num_classes=37, use_batch_norm=True, dropout_p=0.5):
         super().__init__()
@@ -83,23 +82,18 @@ class MultiTaskPerceptionModel(nn.Module):
         """
         Single forward pass → all three task outputs.
         
-        Returns a dict (required by autograder):
-            {
-                'classification': Tensor (B, 37) - classification logits
-                'localization': Tensor (B, 4) - [cx, cy, w, h] in pixels [0-224]
-                'segmentation': Tensor (B, 2, H, W) - segmentation logits
-            }
+        Returns a TUPLE (for compatibility with notebook and inference.py):
+            (cls_logits, bbox, seg_logits)
+            - cls_logits: Tensor (B, 37) - classification logits
+            - bbox: Tensor (B, 4) - [cx, cy, w, h] in pixels [0-224]
+            - seg_logits: Tensor (B, 2, H, W) - segmentation logits
         """
         features   = self.backbone(x)                  # (B, 512, 7, 7)
         cls_logits = self.classifier(features)         # (B, 37)
         bbox       = self.localizer(features) * 224.0  # (B, 4) Sigmoid*224
         seg_logits = self.seg_head(features)           # (B, 2, 224, 224)
 
-        return {
-            'classification': cls_logits,
-            'localization': bbox,
-            'segmentation': seg_logits,
-        }
+        return cls_logits, bbox, seg_logits
 
     # -------------------------------------------------------------------------
     def load_pretrained_components(self, cls_path=None, loc_path=None, seg_path=None):
