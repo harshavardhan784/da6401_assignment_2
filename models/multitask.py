@@ -20,7 +20,7 @@ class MultiTaskPerceptionModel(nn.Module):
       • segmentation   : [B, 3, 224, 224] logits
     """
 
-    def __init__(self, num_breeds: int = 37, seg_classes: int = 3,
+    def __init__(self, num_breeds: int = 37, seg_classes: int = 2,
                  in_channels: int = 3,
                  classifier_path: str = "checkpoints/classifier.pth",
                  localizer_path:  str = "checkpoints/localizer.pth",
@@ -86,8 +86,8 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # ── Segmentation decoder ─────────────────────────────────────────
         from models.segmentation import _DoubleConv
-        self.up5  = nn.ConvTranspose2d(512, 512, kernel_size=2, stride=2)
-        self.dec5 = _DoubleConv(512 + 512, 512, bn)
+        self.up5  = nn.ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
+        self.dec5 = _DoubleConv(1024 + 512, 512, bn)
 
         self.up4  = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
         self.dec4 = _DoubleConv(256 + 512, 256, bn)
