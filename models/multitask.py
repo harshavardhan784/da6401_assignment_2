@@ -14,13 +14,12 @@ from models.classification import VGG11Classifier
 from models.localization    import VGG11Localizer
 from models.segmentation    import VGG11UNet
 
-
 # ---------------------------------------------------------------------------
 # gdown IDs — replace these with YOUR trained checkpoint IDs before submitting
 # ---------------------------------------------------------------------------
 _CLASSIFIER_GDRIVE_ID = "1z2l5ToDfn1fE8ElKvgbFRCfFgCRafuoe"
 _LOCALIZER_GDRIVE_ID  = "1H5UMd5uB5qEsMhZ8pOZuASbwjw-VsKMW"
-_UNET_GDRIVE_ID       = "REPLACE_WITH_YOUR_UNET_ID"
+_UNET_GDRIVE_ID       = "10TZlHa_5bvuIA6HvClb5SmyoAj7H7jCv"
 # ---------------------------------------------------------------------------
 
 
@@ -85,7 +84,7 @@ class MultiTaskPerceptionModel(nn.Module):
         # ── Build sub-models ─────────────────────────────────────────────
         self.classifier  = VGG11Classifier(num_classes=num_breeds)
         self.localizer   = VGG11Localizer()
-        # self.segmenter   = VGG11UNet(num_classes=seg_classes)
+        self.segmenter   = VGG11UNet(num_classes=seg_classes)
 
         # ── Load weights ─────────────────────────────────────────────────
         if os.path.exists(classifier_path):
@@ -115,9 +114,8 @@ class MultiTaskPerceptionModel(nn.Module):
         """
         cls_out = self.classifier(x)   # (B, 37)
         loc_out = self.localizer(x)    # (B, 4)  — pixel space [0..224]
-        # seg_out = self.segmenter(x)    # (B, 3, 224, 224)
+        seg_out = self.segmenter(x)    # (B, 3, 224, 224)
 
-        seg_out = torch.zeros((x.size(0), 3, 224, 224), device=x.device)  # dummy output to keep API consistent
 
         return {
             "classification": cls_out,
