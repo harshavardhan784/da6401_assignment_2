@@ -79,7 +79,7 @@ class MultiTaskPerceptionModel(nn.Module):
         # ── Download checkpoints (no-op if already on disk) ──────────────
         _download(_CLASSIFIER_GDRIVE_ID, classifier_path)
         _download(_LOCALIZER_GDRIVE_ID,  localizer_path)
-        # _download(_UNET_GDRIVE_ID,       unet_path)
+        _download(_UNET_GDRIVE_ID,       unet_path)
 
         # ── Build sub-models ─────────────────────────────────────────────
         self.classifier  = VGG11Classifier(num_classes=num_breeds)
