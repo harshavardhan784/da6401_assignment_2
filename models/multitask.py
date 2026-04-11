@@ -17,12 +17,12 @@ from models.segmentation    import VGG11UNet
 # ---------------------------------------------------------------------------
 # gdown IDs — replace these with YOUR trained checkpoint IDs before submitting
 # ---------------------------------------------------------------------------
-_CLASSIFIER_GDRIVE_ID = "1z2l5ToDfn1fE8ElKvgbFRCfFgCRafuoe"
+# _CLASSIFIER_GDRIVE_ID = "1z2l5ToDfn1fE8ElKvgbFRCfFgCRafuoe"
 _LOCALIZER_GDRIVE_ID  = "1H5UMd5uB5qEsMhZ8pOZuASbwjw-VsKMW"
-# _UNET_GDRIVE_ID       = "10TZlHa_5bvuIA6HvClb5SmyoAj7H7jCv"
+_UNET_GDRIVE_ID       = "10TZlHa_5bvuIA6HvClb5SmyoAj7H7jCv"
 # ---------------------------------------------------------------------------
 # https://drive.google.com/file/d/12Lcpa5y8Ebk_ZHA7LE1L48HU7JJDRdof/view?usp=sharing
-_UNET_GDRIVE_ID = "12Lcpa5y8Ebk_ZHA7LE1L48HU7JJDRdof"
+_CLASSIFIER_GDRIVE_ID = "12Lcpa5y8Ebk_ZHA7LE1L48HU7JJDRdof"
 
 def _download(gdrive_id: str, output: str) -> None:
     """Download from Google Drive only if the file isn't already present."""
