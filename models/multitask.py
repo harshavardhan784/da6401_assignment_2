@@ -28,10 +28,11 @@ class MultiTaskPerceptionModel(nn.Module):
         super().__init__()
 
         import gdown
-        # https://drive.google.com/file/d/1bQatPpJxWBYuzZA949igWJh5OrADKrYM/view?usp=sharing
+
         gdown.download(id="1bQatPpJxWBYuzZA949igWJh5OrADKrYM", output=classifier_path, quiet=False)
-        gdown.download(id="1iyCp5Ums4Yte4OBwJMslu52rI_HlURJ6",  output=localizer_path,  quiet=False)
+        gdown.download(id="1UMlnELm4R8oRXCjQ2j4YluRbn-TzqQGm",  output=localizer_path,  quiet=False)
         gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4",       output=unet_path,       quiet=False)
+
 
         from models.vgg11        import VGG11, init_weights
         from models.layers       import CustomDropout
