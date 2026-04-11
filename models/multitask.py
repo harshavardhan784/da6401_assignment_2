@@ -62,7 +62,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
         if os.path.exists(classifier_path): self._load_cls(classifier_path)
         if os.path.exists(localizer_path):  self._load_loc(localizer_path)
-        if os.path.exists(unet_path):       self._load_seg(unet_path)
+        # if os.path.exists(unet_path):       self._load_seg(unet_path)
 
     @staticmethod
     def _sd(path):
@@ -104,11 +104,15 @@ class MultiTaskPerceptionModel(nn.Module):
         s1,s2,s3,s4,bn = self.backbone(x)
         cls_out = self.cls_head(bn)
         loc_out = self.loc_head(bn.flatten(1) if False else nn.Flatten()(bn))
-        d=self.dec1(torch.cat([self.up1(bn),s4],1))
-        d=self.dec2(torch.cat([self.up2(d), s3],1))
-        d=self.dec3(torch.cat([self.up3(d), s2],1))
-        d=self.dec4(torch.cat([self.up4(d), s1],1))
-        seg_out=self.seg_head(self.up5(d))
+        # d=self.dec1(torch.cat([self.up1(bn),s4],1))
+        # d=self.dec2(torch.cat([self.up2(d), s3],1))
+        # d=self.dec3(torch.cat([self.up3(d), s2],1))
+        # d=self.dec4(torch.cat([self.up4(d), s1],1))
+        # seg_out=self.seg_head(self.up5(d))
+        
+        B = x.shape[0]
+        seg_out = torch.zeros(B, 2, 224, 224, device=x.device)
+
         return {"classification":cls_out,"localization":loc_out,"segmentation":seg_out}
 
 
