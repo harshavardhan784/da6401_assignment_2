@@ -28,11 +28,9 @@ class MultiTaskPerceptionModel(nn.Module):
         super().__init__()
 
         import gdown
-
-        gdown.download(id="1Fj2TiwDGUTxjfPrD32Yis8EiZQiWa_3d", output=classifier_path, quiet=False)
-        gdown.download(id="1UMlnELm4R8oRXCjQ2j4YluRbn-TzqQGm",  output=localizer_path,  quiet=False)
+        gdown.download(id="1XZoUEqXAh0fOOKncd7omB0yZ_ewWegF3", output=classifier_path, quiet=False)
+        gdown.download(id="1B1MIaeSqsqwE1xYcOcfwJaF6E1WyQsPP",  output=localizer_path,  quiet=False)
         gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4",       output=unet_path,       quiet=False)
-
 
         from models.vgg11        import VGG11, init_weights
         from models.layers       import CustomDropout
@@ -171,7 +169,7 @@ class MultiTaskPerceptionModel(nn.Module):
         cls_out = self.cls_head(p5)
 
         # ── Localization (loc_head starts with nn.Flatten) ────────────────
-        loc_out = self.loc_head(p5)
+        loc_out = self.loc_head(p5) * IMAGE_SIZE
 
         # ── Segmentation decoder ──────────────────
         # d5  = self.dec5(torch.cat([self.up5(p5), e5], dim=1))
