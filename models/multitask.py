@@ -86,7 +86,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # ── Segmentation decoder ─────────────────────────────────────────
         from models.segmentation import _DoubleConv
-        self.up5  = nn.ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
+        self.up5 = nn.ConvTranspose2d(512, 512, kernel_size=2, stride=2)
         self.dec5 = _DoubleConv(512 + 512, 512, bn)
 
         self.up4  = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
@@ -131,7 +131,6 @@ class MultiTaskPerceptionModel(nn.Module):
 
     def _load_unet(self, path, seg_classes):
         sd = self._get_sd(path)
-        # Map UNet attribute names → MultiTask attribute names
         remap = {
             'up5': 'up5', 'dec5': 'dec5',
             'up4': 'up4', 'dec4': 'dec4',
@@ -146,9 +145,15 @@ class MultiTaskPerceptionModel(nn.Module):
             if prefix in remap:
                 new_k = remap[prefix] + k[len(prefix):]
                 new_sd[new_k] = v
-        missing, unexpected = self.load_state_dict(new_sd, strict=False)
+
+        # Filter out keys whose shape doesn't match current model
+        model_sd = self.state_dict()
+        filtered_sd = {k: v for k, v in new_sd.items()
+                    if k in model_sd and v.shape == model_sd[k].shape}
+
+        missing, unexpected = self.load_state_dict(filtered_sd, strict=False)
         print(f"  Loaded UNet decoder from {path}  "
-              f"(missing={len(missing)}, unexpected={len(unexpected)})")
+            f"(missing={len(missing)}, unexpected={len(unexpected)})")
 
     # ── Forward ──────────────────────────────────────────────────────────
 
