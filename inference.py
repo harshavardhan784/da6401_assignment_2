@@ -1,167 +1,115 @@
-"""Inference and evaluation
-"""
+"""Inference script for DA6401 Assignment 2."""
 
-
-"""
-Inference script for DA6401 Assignment 2
-Run predictions using trained models
-FIXED VERSION - Handles both tuple and dict returns
-"""
 import argparse
-import torch
+
 import numpy as np
+import torch
 from PIL import Image
 from torchvision import transforms
-
-from models.classification import VGG11Classifier
-from models.localization import VGG11Localizer
-from models.segmentation import VGG11UNet
-from multitask import MultiTaskPerceptionModel
-
 
 IMAGE_SIZE = 224
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# ImageNet stats (use the same mean/std used during training)
+MEAN = [0.485, 0.456, 0.406]
+STD  = [0.229, 0.224, 0.225]
 
-def load_and_preprocess_image(image_path):
-    """Load and preprocess image for inference"""
-    # ImageNet normalization
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    
-    transform = transforms.Compose([
+
+def preprocess(image_path: str) -> torch.Tensor:
+    tf = transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
         transforms.ToTensor(),
-        transforms.Normalize(mean, std),
+        transforms.Normalize(MEAN, STD),
     ])
-    
-    img = Image.open(image_path).convert('RGB')
-    img_tensor = transform(img).unsqueeze(0)  # Add batch dimension
-    
-    return img_tensor
+    return tf(Image.open(image_path).convert('RGB')).unsqueeze(0)
 
 
-def classify(model_path, image_path):
-    """Run classification inference"""
-    model = VGG11Classifier(num_classes=37)
-    checkpoint = torch.load(model_path, map_location=DEVICE)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.to(DEVICE)
-    model.eval()
-    
-    img = load_and_preprocess_image(image_path)
-    img = img.to(DEVICE)
-    
+def _load(model, path):
+    ckpt = torch.load(path, map_location=DEVICE)
+    model.load_state_dict(ckpt.get('model_state_dict', ckpt))
+    model.to(DEVICE).eval()
+    return model
+
+
+# ── Single-task inference ─────────────────────────────────────────────────────
+
+def classify(model_path: str, image_path: str):
+    from models.classification import VGG11Classifier
+    model  = _load(VGG11Classifier(num_classes=37), model_path)
+    img    = preprocess(image_path).to(DEVICE)
     with torch.no_grad():
         logits = model(img)
-        pred = logits.argmax(1).item()
-        prob = torch.softmax(logits, dim=1)[0, pred].item()
-    
-    print(f"Predicted class: {pred}")
-    print(f"Confidence: {prob:.4f}")
-    
+    pred  = logits.argmax(1).item()
+    prob  = torch.softmax(logits, dim=1)[0, pred].item()
+    print(f"Class: {pred}  Confidence: {prob:.4f}")
     return pred, prob
 
 
-def localize(model_path, image_path):
-    """Run localization inference"""
-    model = VGG11Localizer()
-    checkpoint = torch.load(model_path, map_location=DEVICE)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.to(DEVICE)
-    model.eval()
-    
-    img = load_and_preprocess_image(image_path)
-    img = img.to(DEVICE)
-    
+def localize(model_path: str, image_path: str):
+    from models.localization import VGG11Localizer
+    model = _load(VGG11Localizer(), model_path)
+    img   = preprocess(image_path).to(DEVICE)
     with torch.no_grad():
         bbox = model(img)[0].cpu().numpy()
-    
-    print(f"Bounding box [cx, cy, w, h]: {bbox}")
-    
+    print(f"BBox [cx, cy, w, h]: {bbox}")
     return bbox
 
 
-def segment(model_path, image_path):
-    """Run segmentation inference"""
-    model = VGG11UNet(num_classes=2)
-    checkpoint = torch.load(model_path, map_location=DEVICE)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.to(DEVICE)
-    model.eval()
-    
-    img = load_and_preprocess_image(image_path)
-    img = img.to(DEVICE)
-    
+def segment(model_path: str, image_path: str):
+    from models.segmentation import VGG11UNet
+    model = _load(VGG11UNet(num_classes=3), model_path)
+    img   = preprocess(image_path).to(DEVICE)
     with torch.no_grad():
-        logits = model(img)
-        mask = logits.argmax(1)[0].cpu().numpy()
-    
-    print(f"Segmentation mask shape: {mask.shape}")
-    print(f"Foreground pixels: {(mask == 1).sum()}")
-    
+        mask = model(img).argmax(1)[0].cpu().numpy()
+    print(f"Mask shape: {mask.shape}  Unique classes: {np.unique(mask)}")
     return mask
 
 
-def multitask_inference(image_path):
-    """Run multi-task inference - FIXED to handle both tuple and dict returns"""
-    model = MultiTaskPerceptionModel()
-    model.to(DEVICE)
-    model.eval()
-    
-    
-    print("HERE IN SIDE THE INFERENCE FUNCTION")
-    
-    img = load_and_preprocess_image(image_path)
-    img = img.to(DEVICE)
-    
+def multitask_inference(image_path: str):
+    from multitask import MultiTaskPerceptionModel
+    model = MultiTaskPerceptionModel().to(DEVICE).eval()
+    img   = preprocess(image_path).to(DEVICE)
+
     with torch.no_grad():
-        outputs = model(img)
-        
-        # Handle both tuple and dict returns
-        if isinstance(outputs, dict):
-            # Dict format: {'classification': ..., 'localization': ..., 'segmentation': ...}
-            cls_logits = outputs['classification']
-            bbox = outputs['localization']
-            seg_logits = outputs['segmentation']
-        elif isinstance(outputs, tuple) and len(outputs) == 3:
-            # Tuple format: (cls_logits, bbox, seg_logits)
-            cls_logits, bbox, seg_logits = outputs
-        else:
-            raise ValueError(f"Unexpected model output type: {type(outputs)}")
-        
-        pred_class = cls_logits.argmax(1).item()
-        pred_prob = torch.softmax(cls_logits, dim=1)[0, pred_class].item()
-        pred_bbox = bbox[0].cpu().numpy()
-        pred_mask = seg_logits.argmax(1)[0].cpu().numpy()
-    
-    print(f"Classification: class={pred_class}, confidence={pred_prob:.4f}")
-    print(f"Localization: bbox={pred_bbox}")
-    print(f"Segmentation: foreground_pixels={(pred_mask == 1).sum()}")
-    
+        out = model(img)
+
+    cls_logits = out['classification']
+    bbox       = out['localization']
+    seg_logits = out['segmentation']
+
+    pred_class = cls_logits.argmax(1).item()
+    pred_prob  = torch.softmax(cls_logits, dim=1)[0, pred_class].item()
+    pred_bbox  = bbox[0].cpu().numpy()
+    pred_mask  = seg_logits.argmax(1)[0].cpu().numpy()
+
+    print(f"Classification : class={pred_class}  confidence={pred_prob:.4f}")
+    print(f"Localization   : bbox={pred_bbox}")
+    print(f"Segmentation   : foreground_pixels={(pred_mask == 1).sum()}")
     return pred_class, pred_prob, pred_bbox, pred_mask
 
 
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
 def main():
-    parser = argparse.ArgumentParser(description='Run inference on trained models')
-    parser.add_argument('--task', type=str, required=True,
-                       choices=['classification', 'localization', 'segmentation', 'multitask'],
-                       help='Task to run')
-    parser.add_argument('--model_path', type=str, default=None,
-                       help='Path to model checkpoint')
-    parser.add_argument('--image_path', type=str, required=True,
-                       help='Path to input image')
-    args = parser.parse_args()
-    
+    p = argparse.ArgumentParser(description='Run inference')
+    p.add_argument('--task', required=True,
+                   choices=['classification', 'localization', 'segmentation', 'multitask'])
+    p.add_argument('--image_path', required=True)
+    p.add_argument('--model_path', default=None)
+    args = p.parse_args()
+
+    defaults = {
+        'classification': 'checkpoints/classifier.pth',
+        'localization':   'checkpoints/localizer.pth',
+        'segmentation':   'checkpoints/unet.pth',
+    }
+
     if args.task == 'classification':
-        model_path = args.model_path or 'checkpoints/classifier.pth'
-        classify(model_path, args.image_path)
+        classify(args.model_path or defaults['classification'], args.image_path)
     elif args.task == 'localization':
-        model_path = args.model_path or 'checkpoints/localizer.pth'
-        localize(model_path, args.image_path)
+        localize(args.model_path or defaults['localization'], args.image_path)
     elif args.task == 'segmentation':
-        model_path = args.model_path or 'checkpoints/unet.pth'
-        segment(model_path, args.image_path)
+        segment(args.model_path or defaults['segmentation'], args.image_path)
     elif args.task == 'multitask':
         multitask_inference(args.image_path)
 
