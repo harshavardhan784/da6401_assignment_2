@@ -3,7 +3,7 @@
 
 import torch
 import torch.nn as nn
-from layers import CustomDropout
+from models.layers import CustomDropout
 
 class VGG11Classifier(nn.Module):
     """
