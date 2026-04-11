@@ -1,80 +1,42 @@
-"""VGG11 encoder backbone."""
-
-import torch
+# %%writefile /kaggle/working/models/vgg11.py
+"""VGG11 encoder with optional skip-connection return."""
 import torch.nn as nn
-from models.layers import CustomDropout
 
-# Standard VGG11 config: int = conv out_channels, 'M' = MaxPool
-CFG = [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M']
-
-
-def init_weights(module: nn.Module):
-    """Kaiming init for Conv2d and Linear; ones/zeros for BN."""
-    for m in module.modules():
-        if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-        elif isinstance(m, nn.Linear):
-            nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-        elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d)):
-            nn.init.ones_(m.weight)
-            nn.init.zeros_(m.bias)
-
-
-class VGG11(nn.Module):
-    """
-    VGG11 convolutional backbone (feature extractor only, no classifier head).
-    Output: (B, 512, 7, 7) for 224x224 input.
-    """
-
-    def __init__(self, in_channels: int = 3, use_batch_norm: bool = True):
-        super().__init__()
-        self.use_batch_norm = use_batch_norm
-        self.features = self._make_layers(in_channels)
-        init_weights(self)
-
-    def _make_layers(self, in_ch: int) -> nn.Sequential:
-        layers = []
-        for v in CFG:
-            if v == 'M':
-                layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
-            else:
-                layers.append(nn.Conv2d(in_ch, v, kernel_size=3, padding=1, bias=not self.use_batch_norm))
-                if self.use_batch_norm:
-                    layers.append(nn.BatchNorm2d(v))
-                layers.append(nn.ReLU(inplace=True))
-                in_ch = v
-        return nn.Sequential(*layers)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.features(x)
+def conv_block(in_ch, out_ch):
+    return nn.Sequential(
+        nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+        nn.BatchNorm2d(out_ch),
+        nn.ReLU(inplace=True),
+    )
 
 
 class VGG11Encoder(nn.Module):
     """
-    Full VGG11 encoder with adaptive pooling and FC layers.
-    Used as a standalone feature extractor.
+    VGG11 conv backbone.
+    forward(x, return_features=False) -> bottleneck tensor
+    forward(x, return_features=True)  -> (s1, s2, s3, s4, bottleneck)
+    This matches the friend's working code exactly.
     """
-
-    def __init__(self, in_channels: int = 3, use_batch_norm: bool = True):
+    def __init__(self, return_features=False):
         super().__init__()
-        self.backbone = VGG11(in_channels, use_batch_norm)
-        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
-        self.fc = nn.Sequential(
-            nn.Linear(512 * 7 * 7, 4096),
-            nn.ReLU(inplace=True),
-            CustomDropout(p=0.5),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            CustomDropout(p=0.5),
-        )
-        init_weights(self.fc)
+        self.return_features = return_features
+        self.block1 = nn.Sequential(conv_block(3,   64),  nn.MaxPool2d(2,2))
+        self.block2 = nn.Sequential(conv_block(64,  128), nn.MaxPool2d(2,2))
+        self.block3 = nn.Sequential(conv_block(128, 256), conv_block(256,256), nn.MaxPool2d(2,2))
+        self.block4 = nn.Sequential(conv_block(256, 512), conv_block(512,512), nn.MaxPool2d(2,2))
+        self.block5 = nn.Sequential(conv_block(512, 512), conv_block(512,512), nn.MaxPool2d(2,2))
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1); nn.init.constant_(m.bias, 0)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.backbone(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        return self.fc(x)
+    def forward(self, x):
+        s1 = self.block1(x)    # (B,  64, 112, 112)
+        s2 = self.block2(s1)   # (B, 128,  56,  56)
+        s3 = self.block3(s2)   # (B, 256,  28,  28)
+        s4 = self.block4(s3)   # (B, 512,  14,  14)
+        bn = self.block5(s4)   # (B, 512,   7,   7)
+        if self.return_features:
+            return s1, s2, s3, s4, bn
+        return bn
