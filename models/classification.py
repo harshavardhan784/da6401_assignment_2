@@ -2,8 +2,8 @@
 """VGG11 classification model — matches friend's working ClassificationModel."""
 import torch
 import torch.nn as nn
-from layers import CustomDropout
-from vgg11  import VGG11Encoder
+from models.layers import CustomDropout
+from models.vgg11  import VGG11Encoder
 
 
 class VGG11Classifier(nn.Module):
