@@ -87,7 +87,7 @@ class MultiTaskPerceptionModel(nn.Module):
         # ── Segmentation decoder ─────────────────────────────────────────
         from models.segmentation import _DoubleConv
         self.up5  = nn.ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
-        self.dec5 = _DoubleConv(1024 + 512, 512, bn)
+        self.dec5 = _DoubleConv(512 + 512, 512, bn)
 
         self.up4  = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
         self.dec4 = _DoubleConv(256 + 512, 256, bn)
