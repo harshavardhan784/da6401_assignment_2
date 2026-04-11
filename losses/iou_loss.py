@@ -4,47 +4,42 @@
 import torch
 import torch.nn as nn
 
-class IoULoss(nn.Module):
-    """IoU loss for bounding box regression.
-    """
 
-    def __init__(self, eps: float = 1e-6, reduction: str = "mean"):
-        """
-        Initialize the IoULoss module.
-        Args:
-            eps: Small value to avoid division by zero.
-            reduction: Specifies the reduction to apply to the output: 'mean' | 'sum'.
-        """
+class IoULoss(nn.Module):
+    """
+    Custom IoU Loss for bounding box regression.
+    Input: [cx, cy, w, h] in pixel space (not normalized)
+    Output: 1 - IoU, range [0, 1]
+    Supports reduction: 'mean', 'sum', 'none'
+    """
+    def __init__(self, reduction='mean'):
         super().__init__()
-        self.eps = eps
-        self.reduction = reduction
         assert reduction in ('mean', 'sum', 'none'), \
             f"reduction must be 'mean', 'sum', or 'none', got {reduction}"
+        self.reduction = reduction
 
     @staticmethod
-    def _to_xyxy(boxes: torch.Tensor):
-        """Convert boxes from (cx, cy, w, h) to (x_min, y_min, x_max, y_max) format."""
-        cx, cy, w, h = boxes.unbind(dim=-1)
-        x_min = cx - w / 2
-        y_min = cy - h / 2
-        x_max = cx + w / 2
-        y_max = cy + h / 2
-        return torch.stack([x_min, y_min, x_max, y_max], dim=-1)
+    def _to_xyxy(boxes):
+        """Convert [cx, cy, w, h] to [x1, y1, x2, y2]"""
+        cx, cy, w, h = boxes.unbind(-1)
+        x1 = cx - w / 2
+        y1 = cy - h / 2
+        x2 = cx + w / 2
+        y2 = cy + h / 2
+        return torch.stack([x1, y1, x2, y2], -1)
 
-
-    def forward(self, pred_boxes: torch.Tensor, target_boxes: torch.Tensor) -> torch.Tensor:
-        """Compute IoU loss between predicted and target bounding boxes.
+    def forward(self, pred, target):
+        """
         Args:
-            pred_boxes: [B, 4] predicted boxes in (x_center, y_center, width, height) format.
-            target_boxes: [B, 4] target boxes in (x_center, y_center, width, height) format."""
-        # TODO: implement IoU loss.
-        raise NotImplementedError("Implement IoULoss.forward")
-    
-    
-        pred_xyxy = self._to_xyxy(pred_boxes)
-        target_xyxy = self._to_xyxy(target_boxes)
+            pred: (N, 4) predicted boxes [cx, cy, w, h]
+            target: (N, 4) target boxes [cx, cy, w, h]
+        Returns:
+            loss: (N,) or scalar depending on reduction
+        """
+        pred_xyxy = self._to_xyxy(pred)
+        target_xyxy = self._to_xyxy(target)
         
-        # Compute intersection
+        # Intersection coordinates
         x1 = torch.max(pred_xyxy[:, 0], target_xyxy[:, 0])
         y1 = torch.max(pred_xyxy[:, 1], target_xyxy[:, 1])
         x2 = torch.min(pred_xyxy[:, 2], target_xyxy[:, 2])
