@@ -29,7 +29,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
         import gdown
 
-        gdown.download(id="1bQatPpJxWBYuzZA949igWJh5OrADKrYM", output=classifier_path, quiet=False)
+        gdown.download(id="1Fj2TiwDGUTxjfPrD32Yis8EiZQiWa_3d", output=classifier_path, quiet=False)
         gdown.download(id="1UMlnELm4R8oRXCjQ2j4YluRbn-TzqQGm",  output=localizer_path,  quiet=False)
         gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4",       output=unet_path,       quiet=False)
 
