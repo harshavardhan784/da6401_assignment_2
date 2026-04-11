@@ -10,16 +10,16 @@ import os
 import torch
 import torch.nn as nn
 
-from models.classification import VGG11Classifier
-from models.localization    import VGG11Localizer
-from models.segmentation    import VGG11UNet
+from classification import VGG11Classifier
+from localization    import VGG11Localizer
+from segmentation    import VGG11UNet
 
 
 # ---------------------------------------------------------------------------
 # gdown IDs — replace these with YOUR trained checkpoint IDs before submitting
 # ---------------------------------------------------------------------------
-_CLASSIFIER_GDRIVE_ID = "REPLACE_WITH_YOUR_CLASSIFIER_ID"
-_LOCALIZER_GDRIVE_ID  = "REPLACE_WITH_YOUR_LOCALIZER_ID"
+_CLASSIFIER_GDRIVE_ID = "1z2l5ToDfn1fE8ElKvgbFRCfFgCRafuoe"
+_LOCALIZER_GDRIVE_ID  = "1H5UMd5uB5qEsMhZ8pOZuASbwjw-VsKMW"
 _UNET_GDRIVE_ID       = "REPLACE_WITH_YOUR_UNET_ID"
 # ---------------------------------------------------------------------------
 
@@ -65,6 +65,7 @@ class MultiTaskPerceptionModel(nn.Module):
     }
     """
 
+
     def __init__(
         self,
         num_breeds: int = 37,
@@ -79,12 +80,12 @@ class MultiTaskPerceptionModel(nn.Module):
         # ── Download checkpoints (no-op if already on disk) ──────────────
         _download(_CLASSIFIER_GDRIVE_ID, classifier_path)
         _download(_LOCALIZER_GDRIVE_ID,  localizer_path)
-        _download(_UNET_GDRIVE_ID,       unet_path)
+        # _download(_UNET_GDRIVE_ID,       unet_path)
 
         # ── Build sub-models ─────────────────────────────────────────────
         self.classifier  = VGG11Classifier(num_classes=num_breeds)
         self.localizer   = VGG11Localizer()
-        self.segmenter   = VGG11UNet(num_classes=seg_classes)
+        # self.segmenter   = VGG11UNet(num_classes=seg_classes)
 
         # ── Load weights ─────────────────────────────────────────────────
         if os.path.exists(classifier_path):
@@ -97,10 +98,10 @@ class MultiTaskPerceptionModel(nn.Module):
         else:
             print(f"  [warn] localizer checkpoint not found: {localizer_path}")
 
-        if os.path.exists(unet_path):
-            _load_state(self.segmenter, unet_path, strict=True)
-        else:
-            print(f"  [warn] unet checkpoint not found: {unet_path}")
+        # if os.path.exists(unet_path):
+            # _load_state(self.segmenter, unet_path, strict=True)
+        # else:
+        #     print(f"  [warn] unet checkpoint not found: {unet_path}")
 
     def forward(self, x: torch.Tensor) -> dict:
         """
@@ -114,7 +115,9 @@ class MultiTaskPerceptionModel(nn.Module):
         """
         cls_out = self.classifier(x)   # (B, 37)
         loc_out = self.localizer(x)    # (B, 4)  — pixel space [0..224]
-        seg_out = self.segmenter(x)    # (B, 3, 224, 224)
+        # seg_out = self.segmenter(x)    # (B, 3, 224, 224)
+
+        seg_out = torch.zeros((x.size(0), 3, 224, 224), device=x.device)  # dummy output to keep API consistent
 
         return {
             "classification": cls_out,
