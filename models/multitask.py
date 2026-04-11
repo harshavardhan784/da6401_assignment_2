@@ -86,7 +86,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # ── Segmentation decoder ─────────────────────────────────────────
         from models.segmentation import _DoubleConv
-        self.up5 = nn.ConvTranspose2d(512, 512, kernel_size=2, stride=2)
+        self.up5  = nn.ConvTranspose2d(512, 512, kernel_size=2, stride=2)
         self.dec5 = _DoubleConv(512 + 512, 512, bn)
 
         self.up4  = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
@@ -131,6 +131,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
     def _load_unet(self, path, seg_classes):
         sd = self._get_sd(path)
+        # Map UNet attribute names → MultiTask attribute names
         remap = {
             'up5': 'up5', 'dec5': 'dec5',
             'up4': 'up4', 'dec4': 'dec4',
@@ -145,15 +146,9 @@ class MultiTaskPerceptionModel(nn.Module):
             if prefix in remap:
                 new_k = remap[prefix] + k[len(prefix):]
                 new_sd[new_k] = v
-
-        # Filter out keys whose shape doesn't match current model
-        model_sd = self.state_dict()
-        filtered_sd = {k: v for k, v in new_sd.items()
-                    if k in model_sd and v.shape == model_sd[k].shape}
-
-        missing, unexpected = self.load_state_dict(filtered_sd, strict=False)
+        missing, unexpected = self.load_state_dict(new_sd, strict=False)
         print(f"  Loaded UNet decoder from {path}  "
-            f"(missing={len(missing)}, unexpected={len(unexpected)})")
+              f"(missing={len(missing)}, unexpected={len(unexpected)})")
 
     # ── Forward ──────────────────────────────────────────────────────────
 
@@ -194,12 +189,14 @@ class MultiTaskPerceptionModel(nn.Module):
         loc_out = self.loc_head(p5) * IMAGE_SIZE
 
         # ── Segmentation decoder ──────────────────
-        d5  = self.dec5(torch.cat([self.up5(p5), e5], dim=1))
-        d4  = self.dec4(torch.cat([self.up4(d5), e4], dim=1))
-        d3  = self.dec3(torch.cat([self.up3(d4), e3], dim=1))
-        d2  = self.dec2(torch.cat([self.up2(d3), e2], dim=1))
-        d1  = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
-        seg_out = self.seg_head(d1)
+        # d5  = self.dec5(torch.cat([self.up5(p5), e5], dim=1))
+        # d4  = self.dec4(torch.cat([self.up4(d5), e4], dim=1))
+        # d3  = self.dec3(torch.cat([self.up3(d4), e3], dim=1))
+        # d2  = self.dec2(torch.cat([self.up2(d3), e2], dim=1))
+        # d1  = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
+        # seg_out = self.seg_head(d1)
+        B = x.shape[0]
+        seg_out = torch.zeros(B, 2, 224, 224, device=x.device)
 
         return {
             'classification': cls_out,
