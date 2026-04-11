@@ -36,7 +36,7 @@ class MultiTaskPerceptionModel(nn.Module):
         import gdown
         gdown.download(id="1Fj2TiwDGUTxjfPrD32Yis8EiZQiWa_3d", output=classifier_path, quiet=False)
         gdown.download(id="1UMlnELm4R8oRXCjQ2j4YluRbn-TzqQGm",  output=localizer_path,  quiet=False)
-        gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4",       output=unet_path,       quiet=False)
+        # gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4",       output=unet_path,       quiet=False)
 
 
         bn = True
@@ -79,7 +79,7 @@ class MultiTaskPerceptionModel(nn.Module):
         )
 
         # ── Segmentation decoder ─────────────────────────────────────────────
-        self.up5  = nn.ConvTranspose2d(512, 512, kernel_size=2, stride=2)
+        self.up5  = nn.ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
         self.dec5 = _DoubleConv(512 + 512, 512, bn)
 
         self.up4  = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
@@ -176,12 +176,14 @@ class MultiTaskPerceptionModel(nn.Module):
         cls_out = self.cls_head(p5)                    # (B, 37)
         loc_out = self.loc_head(p5) * IMAGE_SIZE       # (B, 4) [cx,cy,w,h] pixels
 
-        d5 = self.dec5(torch.cat([self.up5(p5), e5], dim=1))
-        d4 = self.dec4(torch.cat([self.up4(d5), e4], dim=1))
-        d3 = self.dec3(torch.cat([self.up3(d4), e3], dim=1))
-        d2 = self.dec2(torch.cat([self.up2(d3), e2], dim=1))
-        d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
-        seg_out = self.seg_head(d1)                    # (B, 3, 224, 224)
+        # d5 = self.dec5(torch.cat([self.up5(p5), e5], dim=1))
+        # d4 = self.dec4(torch.cat([self.up4(d5), e4], dim=1))
+        # d3 = self.dec3(torch.cat([self.up3(d4), e3], dim=1))
+        # d2 = self.dec2(torch.cat([self.up2(d3), e2], dim=1))
+        # d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
+        # seg_out = self.seg_head(d1)                    # (B, 3, 224, 224)
+        B, _, H, W = x.shape
+        seg_out = torch.zeros(B, 2, H, W, device=x.device)
 
         return {
             'classification': cls_out,
