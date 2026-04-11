@@ -30,7 +30,7 @@ class MultiTaskPerceptionModel(nn.Module):
         import gdown
         # https://drive.google.com/file/d/1bQatPpJxWBYuzZA949igWJh5OrADKrYM/view?usp=sharing
         gdown.download(id="1bQatPpJxWBYuzZA949igWJh5OrADKrYM", output=classifier_path, quiet=False)
-        gdown.download(id="1gKu5L9hSIAFMJuOMxiUqHIVm5EbIScKD",  output=localizer_path,  quiet=False)
+        gdown.download(id="1iyCp5Ums4Yte4OBwJMslu52rI_HlURJ6",  output=localizer_path,  quiet=False)
         gdown.download(id="1aWRiSNzmgdk3WbTOppXUfJ6Mkk6OUIA4",       output=unet_path,       quiet=False)
 
         from models.vgg11        import VGG11, init_weights
