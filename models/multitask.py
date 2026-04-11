@@ -97,10 +97,10 @@ class MultiTaskPerceptionModel(nn.Module):
         else:
             print(f"  [warn] localizer checkpoint not found: {localizer_path}")
 
-        # if os.path.exists(unet_path):
-            # _load_state(self.segmenter, unet_path, strict=True)
-        # else:
-        #     print(f"  [warn] unet checkpoint not found: {unet_path}")
+        if os.path.exists(unet_path):
+            _load_state(self.segmenter, unet_path, strict=True)
+        else:
+            print(f"  [warn] unet checkpoint not found: {unet_path}")
 
     def forward(self, x: torch.Tensor) -> dict:
         """
