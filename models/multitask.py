@@ -10,9 +10,9 @@ import os
 import torch
 import torch.nn as nn
 
-from classification import VGG11Classifier
-from localization    import VGG11Localizer
-from segmentation    import VGG11UNet
+from models.classification import VGG11Classifier
+from models.localization    import VGG11Localizer
+from models.segmentation    import VGG11UNet
 
 
 # ---------------------------------------------------------------------------
