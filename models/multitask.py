@@ -21,8 +21,8 @@ from models.segmentation    import VGG11UNet
 _LOCALIZER_GDRIVE_ID  = "1H5UMd5uB5qEsMhZ8pOZuASbwjw-VsKMW"
 _UNET_GDRIVE_ID       = "10TZlHa_5bvuIA6HvClb5SmyoAj7H7jCv"
 # ---------------------------------------------------------------------------
-# https://drive.google.com/file/d/12Lcpa5y8Ebk_ZHA7LE1L48HU7JJDRdof/view?usp=sharing
-_CLASSIFIER_GDRIVE_ID = "12Lcpa5y8Ebk_ZHA7LE1L48HU7JJDRdof"
+# https://drive.google.com/file/d/18KZBAK5O8LaatT-RVASNz7_7_HLr9aXS/view?usp=sharing
+_CLASSIFIER_GDRIVE_ID = "18KZBAK5O8LaatT-RVASNz7_7_HLr9aXS"
 
 def _download(gdrive_id: str, output: str) -> None:
     """Download from Google Drive only if the file isn't already present."""
