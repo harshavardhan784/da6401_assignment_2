@@ -9,6 +9,7 @@ Equal weighting is therefore meaningful.
 import torch.nn as nn
 
 
+
 class LocalizationLoss(nn.Module):
     def __init__(self, mse_weight: float = 0.5, iou_weight: float = 0.5):
         super().__init__()

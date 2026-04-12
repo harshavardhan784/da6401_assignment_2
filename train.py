@@ -19,7 +19,7 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 IMAGE_SIZE = 224
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ─
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -50,7 +50,7 @@ def dice_score(pred: torch.Tensor, target: torch.Tensor, num_classes: int = 3,
     return sum(scores) / num_classes
 
 
-# ── Task trainers ─────────────────────────────────────────────────────────────
+# ── Task trainers ─
 
 def train_classifier(args):
     train_loader, val_loader, mean, std = get_dataloaders(
@@ -206,7 +206,7 @@ def train_segmentation(args):
     wandb.finish()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Main ─
 
 def parse_args():
     p = argparse.ArgumentParser(description='DA6401 Assignment 2 Training')

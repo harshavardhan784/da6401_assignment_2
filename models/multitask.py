@@ -77,17 +77,17 @@ class MultiTaskPerceptionModel(nn.Module):
     ):
         super().__init__()
 
-        # ── Download checkpoints (no-op if already on disk) ──────────────
+        # Download checkpoints
         _download(_CLASSIFIER_GDRIVE_ID, classifier_path)
         _download(_LOCALIZER_GDRIVE_ID,  localizer_path)
         _download(_UNET_GDRIVE_ID,       unet_path)
 
-        # ── Build sub-models ─────────────────────────────────────────────
+        # Build sub-models
         self.classifier  = VGG11Classifier(num_classes=num_breeds)
         self.localizer   = VGG11Localizer()
         self.segmenter   = VGG11UNet(num_classes=seg_classes)
 
-        # ── Load weights ─────────────────────────────────────────────────
+        # Load weights
         if os.path.exists(classifier_path):
             _load_state(self.classifier, classifier_path, strict=True)
         else:

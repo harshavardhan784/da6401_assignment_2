@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch
 import torch.nn as nn
 
+
 class IoULoss(nn.Module):
     def __init__(self, reduction='mean'):
         super().__init__()

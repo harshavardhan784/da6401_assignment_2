@@ -1,4 +1,3 @@
-# %%writefile /kaggle/working/models/vgg11.py
 """VGG11 encoder with optional skip-connection return."""
 import torch.nn as nn
 

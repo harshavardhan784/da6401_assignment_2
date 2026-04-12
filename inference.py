@@ -31,7 +31,7 @@ def _load(model, path):
     return model
 
 
-# ── Single-task inference ─────────────────────────────────────────────────────
+# ── Single-task inference ──
 
 def classify(model_path: str, image_path: str):
     from models.classification import VGG11Classifier
@@ -88,7 +88,7 @@ def multitask_inference(image_path: str):
     return pred_class, pred_prob, pred_bbox, pred_mask
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# ── CLI ──
 
 def main():
     p = argparse.ArgumentParser(description='Run inference')

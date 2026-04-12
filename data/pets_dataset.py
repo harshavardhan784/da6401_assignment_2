@@ -2,7 +2,7 @@
 Oxford-IIIT Pet Dataset – corrected implementation.
 
 Key fixes vs. the skeleton
-──────────────────────────
+──
 1. Missing annotation files are filtered out at __init__ time (not at
    __getitem__ time).  This keeps __len__ accurate, ensures DataLoader
    batches are always full, and prevents silent bad data from entering
@@ -29,9 +29,9 @@ from torchvision import transforms
 from tqdm import tqdm
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Mean / std helper
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 
 def compute_mean_std(dataset: Dataset) -> tuple[list, list]:
     """
@@ -57,9 +57,9 @@ def compute_mean_std(dataset: Dataset) -> tuple[list, list]:
     return mean.tolist(), std.tolist()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Dataset
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 
 class OxfordIIITPetDataset(Dataset):
     """
@@ -96,14 +96,14 @@ class OxfordIIITPetDataset(Dataset):
         self.trimaps_dir = os.path.join(root_dir, "annotations", "trimaps")
         self.xmls_dir    = os.path.join(root_dir, "annotations", "xmls")
 
-        # ── collect all valid image files ────────────────────────────────
+        # ── collect all valid image files ──
         all_files = sorted([
             f for f in os.listdir(self.images_dir)
             if f.lower().endswith((".jpg", ".jpeg", ".png"))
             and not f.startswith("._")
         ])
 
-        # ── build class index from the full file list ────────────────────
+        # ── build class index from the full file list ──
         # Must be built before filtering so class indices are consistent
         # across tasks and splits.
         self.class_names  = sorted(set(self._cls(f) for f in all_files))
@@ -113,7 +113,7 @@ class OxfordIIITPetDataset(Dataset):
             f"Expected 37 classes, found {len(self.class_names)}"
         )
 
-        # ── stratified train / val split ─────────────────────────────────
+        # ── stratified train / val split 
         labels = [self._cls(f) for f in all_files]
         tr, vl = train_test_split(
             all_files,
@@ -123,7 +123,7 @@ class OxfordIIITPetDataset(Dataset):
         )
         self.files = tr if split == "train" else vl
 
-        # ── filter out samples with missing annotation files ─────────────
+        # ── filter out samples with missing annotation files ─
         # Filtering here (not in __getitem__) is critical:
         #   • __len__ stays accurate → DataLoader batches are always full
         #   • __getitem__ stays clean → no None returns or dummy tensors
@@ -153,7 +153,7 @@ class OxfordIIITPetDataset(Dataset):
                 f"missing annotations ({after} remaining)"
             )
 
-    # ── private helpers ───────────────────────────────────────────────────
+    # ── private helpers 
 
     def _cls(self, fname: str) -> str:
         """'Abyssinian_001.jpg' -> 'Abyssinian'"""
@@ -322,7 +322,7 @@ def get_dataloaders(
 
     val_tf = basic_tf
 
-    # ── build datasets ────────────────────────────────────────────────────
+    # ── build datasets ─
     train_ds = OxfordIIITPetDataset(
         root_dir, "train", task, image_size, train_tf
     )
@@ -330,7 +330,7 @@ def get_dataloaders(
         root_dir, "val", task, image_size, val_tf
     )
 
-    # ── build loaders ─────────────────────────────────────────────────────
+    # ── build loaders ──
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,

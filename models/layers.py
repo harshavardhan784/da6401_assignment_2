@@ -1,4 +1,3 @@
-# %%writefile /kaggle/working/models/layers.py
 """Custom inverted dropout."""
 import torch
 import torch.nn as nn
