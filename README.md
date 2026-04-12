@@ -2,8 +2,6 @@
 
 **WandB Report:** [DA6401_A2 Report](https://wandb.ai/da25s018-iit-madras/da6401-a2/reports/DA6401_A2--VmlldzoxNjQ5NzAxMA?accessToken=jja4sl546dq0jq2jtapbojt9ur8h7u0tf3zav0fbubddc97hex1ogz5idl150zrq)
 
-**GitHub Repo:** *(add your repo link here)*
-
 ---
 
 ## Overview
